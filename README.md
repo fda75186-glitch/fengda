@@ -1,50 +1,51 @@
-# 星语 · 天文科普平台
+# 星语 · 天文科普平台 0.1.1
 
-传智杯参赛作品，面向大众与学生的天文科普网站。第一版 `0.1.0`，采用 Vue 3、Vite、MapLibre GL 和 Lucide 图标。
+传智杯参赛作品，面向大众与学生。用户于 2026-10-10 确认采用探索宇宙 3D 预览版 3，正式版本号为 `0.1.1`，以第一版 `0.1.0` 为基础。
 
-## 启动与开发
+探索宇宙的八大行星、太阳、月球、仙女座星系与黑洞均使用交互式三维展示，支持拖动旋转、缩放、暂停与重置。仙女座星系采用用户确认的暖白核心、深褐尘埃带和蓝色旋臂效果；黑洞采用白金吸积盘与弯曲光带。大图、天体卡片和详情同步呈现三维模型。
 
-安装 Node.js 24 和 pnpm 11 后，在仓库根目录执行：
+## 打开交付包
+
+在完整启动包中双击 `启动星语.cmd`，即可打开本地网站。程序从当前目录读取 `dist` 和 `runtime/node.exe`；解压后保持目录完整，无需安装开发依赖。默认打开仙女座星系。
+
+## 启动源码
+
+安装 Node.js 24 和 pnpm 11 后，在项目根目录运行：
 
 ```powershell
 pnpm install
 pnpm dev
 ```
 
-访问 http://127.0.0.1:5173/ 。开发预览期间保持终端运行。
+访问终端显示的地址，开发期间保持终端运行。构建生产网站：
 
 ```powershell
 pnpm build
 pnpm preview
 ```
 
-生产网站文件生成到 `dist`。这个仓库包含可重新构建的源码及图片视频素材，不需要提交依赖目录或本机 Node 运行程序。
+生产文件生成到 `dist`。源码包包含网页源码、纹理、图片、影片、资料和构建配置；不包含开发依赖和本机运行程序。
 
-## GitHub 托管与在线体验
+## GitHub 托管
 
-1. 将当前目录内容上传到自己的 GitHub 仓库，默认分支使用 `main`。
-2. 打开仓库 **Settings → Pages**，将 **Source** 设置为 **GitHub Actions**。
-3. 打开 **Actions → Publish StarWhisper to GitHub Pages → Run workflow**。
-4. 发布成功后，Pages 设置页和工作流会显示真实在线地址。之后推送到 `main` 会自动更新网站。
+源码仓库：[fda75186-glitch/fengda](https://github.com/fda75186-glitch/fengda)。在线入口：[GitHub Pages](https://fda75186-glitch.github.io/fengda/)。发布进度以仓库 Actions 为准。
 
-工作流使用 GitHub 返回的 `base_path` 生成资源路径，适配 `用户名.github.io/仓库名/`。部署未完成前，不将地址模板当成可用链接。
+仓库使用 `.github/workflows/pages.yml` 构建发布。GitHub Pages 的 Source 设置为 GitHub Actions。工作流根据 GitHub 返回的 `base_path` 生成资源路径，适配带仓库名的网址；推送到 `main` 会自动发布。每次新版本仍须先提供预览，用户人工确认后再发布。
 
-发布方法参考 [GitHub Pages 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) 和 [Vite 官方部署指南](https://vite.dev/guide/static-deploy.html)。
+## 功能与素材
 
-## 第一版功能
+首页科普影片、探索宇宙、知识卡、星空图谱、AI 星语、天文挑战、观测指南、AR 宇宙云图、本地社区、阅读与收藏。
 
-首页科普影片、探索宇宙与文章阅读、知识卡、八大行星公转图谱、AI 星语、天文挑战、真实地形观测地图、AR 宇宙云图、本地社区，以及阅读记录与收藏。
+AI 与知识卡使用本地科普知识，AR 为相机叠加演示；当前社区、评论和收藏存储在访问者自己的浏览器。观测地图需联网加载底图和地形，图谱位置不是实时天象。
 
-品牌标识统一为立体土星，支持页面切换与按钮反馈、滚动显现、可移动及隐藏的星语快捷入口。
+行星纹理随项目提供，来源见 `public/textures/CREDITS.md`。仙女座纹理为生成的科普美术素材，来源与提示词见 `public/textures/galaxy-reference-v3.md`，星系与黑洞效果属于科普示意。其他素材来源见 `docs/素材来源.md`、`docs/第三版素材与交互更新.md` 和 `docs/地图数据来源.md`。
 
-AI 和知识卡是本地知识演示；AR 是科普相机叠加演示；社区、评论和收藏保存在访问者自己的浏览器，未接入账户、云端数据库或真实大模型。地图需要联网加载底图和地形，轨道位置不是实时天象。
+## 目录
 
-## 源码目录
+- `src/`：页面、交互、模型、科普数据与样式。
+- `public/`：Logo、纹理、图片和首页影片。
+- `docs/`：方案、版本和素材资料。
+- `tests/`：已有功能测试。
+- `.github/workflows/pages.yml`：GitHub Pages 发布工作流。
 
-- `src/`：页面、交互、科普数据和样式。
-- `public/`：Logo、图片和首页影片素材。
-- `tests/`：已有的知识、社区、交互、轨道与观测地测试。
-- `docs/`：方案、版本记录、素材来源和地图坐标来源。
-- `.github/workflows/pages.yml`：GitHub Pages 自动发布工作流。
-
-素材来源与署名见 `docs/素材来源.md`、`docs/第三版素材与交互更新.md`、`docs/地图数据来源.md`。星语与 NASA 无隶属关系。团队姓名、学校和分工由参赛团队正式填写。
+星语与 NASA 无隶属关系。团队姓名、学校与分工由参赛团队正式填写。
