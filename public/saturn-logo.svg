@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100" fill="none">
+ <defs>
+  <radialGradient id="sphere" cx=".32" cy=".24" r=".82"><stop stop-color="#fff5cf"/><stop offset=".25" stop-color="#eed399"/><stop offset=".57" stop-color="#c99d69"/><stop offset=".83" stop-color="#906a4b"/><stop offset="1" stop-color="#3c3342"/></radialGradient>
+  <linearGradient id="ring" x1="12" y1="75" x2="102" y2="25" gradientUnits="userSpaceOnUse"><stop stop-color="#b39988"/><stop offset=".23" stop-color="#eee2c1"/><stop offset=".49" stop-color="#b7a187"/><stop offset=".75" stop-color="#f7ebcb"/><stop offset="1" stop-color="#ad967c"/></linearGradient>
+  <clipPath id="disk"><circle cx="60" cy="48" r="27"/></clipPath>
+  <filter id="shadow" x="0" y="0" width="120" height="100" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#554b62" flood-opacity=".16"/></filter>
+ </defs>
+ <g filter="url(#shadow)">
+  <ellipse cx="60" cy="50" rx="52" ry="16" transform="rotate(-26 60 50)" stroke="url(#ring)" stroke-width="9"/>
+  <ellipse cx="60" cy="50" rx="52" ry="16" transform="rotate(-26 60 50)" stroke="#fff4ce" stroke-opacity=".45" stroke-width="1"/>
+  <circle cx="60" cy="48" r="27" fill="url(#sphere)"/>
+  <g clip-path="url(#disk)" opacity=".42" transform="rotate(-14 60 48)"><path d="M29 37 Q61 49 91 38" stroke="#fff0c0" stroke-width="3"/><path d="M27 47 Q61 58 94 47" stroke="#9c754d" stroke-width="3"/><path d="M30 53 Q60 66 92 55" stroke="#e9ce95" stroke-width="2"/><path d="M30 59 Q59 68 91 63" stroke="#a4815d" stroke-width="2"/></g>
+  <path d="M 12.2 67.2 C 14.9 79.1 48.1 75.2 75.3 62 C 96.2 51.8 110.2 39.2 107.8 32.8" stroke="url(#ring)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M 12.2 67.2 C 14.9 79.1 48.1 75.2 75.3 62 C 96.2 51.8 110.2 39.2 107.8 32.8" stroke="#fff4ce" stroke-opacity=".55" stroke-width="1.1"/>
+ </g>
+</svg>

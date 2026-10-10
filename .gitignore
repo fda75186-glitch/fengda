@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+output/
+runtime/
+.openai/
+.sites-runtime/
+公网发布/
+.env.*
+!.env.example
