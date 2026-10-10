@@ -1,4 +1,5 @@
 <script setup>
+import OfflineObservatoryMap from './OfflineObservatoryMap.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { Layers, MapPin, Maximize, RefreshCw, WifiOff } from '@lucide/vue';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -8,6 +9,7 @@ import { createObservatoryMapStyle, observatoryBounds } from '../observatories.j
 const props = defineProps({ places: { type: Array, required: true }, selectedId: { type: String, required: true } });
 const emit = defineEmits(['select']);
 const mapElement = ref(null), state = ref('loading'), is3d = ref(true), terrainIssue = ref(false), mapIssue = ref(false), terrainLoaded = ref(false), baseLoading = ref(true);
+const localMode=ref(false);
 const message = ref('正在加载真实地理底图与高程数据…');
 const selected = computed(() => props.places.find(p => p.id === props.selectedId) || props.places[0]);
 let map, library, markers = [], loadTimer, terrainTimer, resizeObserver, generation = 0, disposed = false, styleInitialized = false;
@@ -112,10 +114,10 @@ async function initialize() {
     });
     loadTimer = setTimeout(() => {
       if (state.value !== 'ready') { state.value = 'error'; message.value = '底图未能加载。请检查网络后重试，或通过下方链接打开地图。'; }
-    }, 18000);
+    }, 6500);
     terrainTimer = setTimeout(() => {
       if (!terrainLoaded.value) { terrainIssue.value = true; is3d.value = false; useFlatTerrain(); }
-    }, 25000);
+    }, 10000);
   } catch {
     if (disposed || attempt !== generation) return;
     state.value = 'error'; message.value = '当前浏览器未能初始化立体地图，请重试或在外部地图中查看。';
@@ -132,24 +134,25 @@ defineExpose({ focusPlace });
 <template>
   <div class="terrain-map" :aria-busy="state==='loading'">
     <div ref="mapElement" class="terrain-map-canvas" role="region" aria-label="天文地标真实地理地图，可缩放、旋转、倾斜"/>
-    <div class="terrain-toolbar" aria-label="地图视图控制">
-      <button :disabled="state!=='ready'" @click="showAll"><Maximize :size="14"/>全部地标</button>
-      <button :disabled="state!=='ready'" @click="focusPlace()"><MapPin :size="14"/>定位此处</button>
-      <button :disabled="state!=='ready'||terrainIssue" :aria-pressed="is3d&&!terrainIssue" @click="toggleDimension"><Layers :size="14"/>{{ is3d&&!terrainIssue ? '3D 地形' : '2D 地图' }}</button>
+    <OfflineObservatoryMap v-if="state!=='ready'||localMode" :places="places" :selected-id="selectedId" @select="emit('select',$event)"/><div class="terrain-toolbar" aria-label="地图视图控制">
+      <button v-if="state==='ready'&&!localMode" @click="showAll"><Maximize :size="14"/>全部地标</button>
+      <button v-if="state==='ready'&&!localMode" @click="focusPlace()"><MapPin :size="14"/>定位此处</button>
+      <button v-if="state==='ready'&&!localMode" :disabled="terrainIssue" :aria-pressed="is3d&&!terrainIssue" @click="toggleDimension"><Layers :size="14"/>{{ is3d&&!terrainIssue ? '3D 地形' : '2D 地图' }}</button>
+<button v-if="state==='ready'" @click="localMode=!localMode">{{localMode?'切换立体地图':'本地地理概览'}}</button><button v-else @click="initialize">{{state==='loading'?'正在连接立体地图…':'重试立体地图'}}</button><button v-if="state!=='ready'||localMode" @click="emit('select',selectedId)">阅读当前地标</button>
     </div>
-    <div v-if="state!=='ready'" class="terrain-state" role="status">
+    <div v-if="false" class="terrain-state" role="status">
       <div>
         <WifiOff v-if="state==='offline'" :size="27"/><MapPin v-else :size="27"/>
         <h3>{{ state==='loading' ? '让地标回到真实的大地' : '地图暂时无法显示' }}</h3><p>{{ message }}</p>
         <button v-if="state!=='loading'" class="button secondary" @click="initialize"><RefreshCw :size="15"/>重新加载地图</button>
-        <a :href="selected.sourceUrl" target="_blank" rel="noopener noreferrer">在 OpenStreetMap 查看{{ selected.name }} ↗</a>
+        <a :href="selected.sourceUrl" target="_blank" rel="noopener noreferrer">在 OpenStreetMap 查看{{ selected.name }}</a>
       </div>
     </div>
-    <div v-else-if="terrainIssue||mapIssue||(is3d&&!terrainLoaded)||baseLoading" class="terrain-warning" role="status">
+    <div v-if="state==='ready'&&!localMode&&(terrainIssue||mapIssue||(is3d&&!terrainLoaded)||baseLoading)" class="terrain-warning" role="status">
       <span>{{ terrainIssue ? '高程数据暂不可用，当前显示真实二维底图。' : mapIssue ? '部分地图瓦片未加载，当前视图可能不完整。' : (is3d&&!terrainLoaded) ? '真实高程数据正在加载…' : '正在加载当前视野的地图瓦片…' }}</span>
       <button v-if="terrainIssue||mapIssue" @click="initialize">重试 <RefreshCw :size="12"/></button>
     </div>
-    <div v-if="state==='ready'" class="terrain-help">拖动平移 · 右键拖动旋转与倾斜 · 按住 Ctrl 滚轮缩放</div>
+    <div v-if="state==='ready'&&!localMode" class="terrain-help">拖动平移 · 右键拖动旋转与倾斜 · 按住 Ctrl 滚轮缩放</div>
   </div>
 </template>
 

@@ -82,8 +82,8 @@ onUnmounted(() => { cancelAnimationFrame(frame); motionQuery?.removeEventListene
         <h2>{{ selected.name }}<span>{{ selected.en }}</span></h2>
         <p>{{ selected.intro }}</p>
         <dl><div><dt>赤道直径</dt><dd>{{ selected.diameter.toLocaleString() }} <small>km</small></dd></div><div><dt>公转周期</dt><dd>{{ selected.year }} <small>地球年</small></dd></div><div><dt>距太阳平均距离</dt><dd>{{ selected.distance }} <small>AU</small></dd></div></dl>
-        <button class="button primary" @click="$emit('ask', `关于${selected.name}，我想了解更多`)">问问星语 <ArrowUpRight :size="17" /></button>
-        <a class="source-link" href="https://nssdc.gsfc.nasa.gov/planetary/factsheet/" target="_blank" rel="noopener noreferrer">NASA 行星数据 <ExternalLink :size="13" /></a>
+        <button class="button primary" @click="$emit('ask', `关于${selected.name}，我想了解更多`)">问问星语 </button>
+        <a class="source-link" href="https://nssdc.gsfc.nasa.gov/planetary/factsheet/" target="_blank" rel="noopener noreferrer">NASA 行星数据 </a>
       </aside>
     </div>
     <div class="planet-selector" aria-label="选择行星"><button v-for="p in planets" :key="p.name" :class="{ selected: selected.name === p.name }" :aria-pressed="selected.name === p.name" @click="selected = p"><i :style="{ background: p.color }"></i>{{ p.name }}</button></div>

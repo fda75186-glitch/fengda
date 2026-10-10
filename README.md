@@ -1,6 +1,6 @@
 # 星语 · 天文科普平台
 
-传智杯参赛作品，面向大众与学生的天文科普网站。第一版 `0.1.0`，采用 Vue 3、Vite、MapLibre GL 和 Lucide 图标。
+传智杯参赛作品，面向大众与学生的天文科普网站。第二版 `0.2.0`，采用 Vue 3、Vite、MapLibre GL、Three.js 和 Lucide 图标。
 
 ## 启动与开发
 
@@ -31,13 +31,31 @@ pnpm preview
 
 发布方法参考 [GitHub Pages 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) 和 [Vite 官方部署指南](https://vite.dev/guide/static-deploy.html)。
 
-## 第一版功能
+## 第二版功能
 
-首页科普影片、探索宇宙与文章阅读、知识卡、八大行星公转图谱、AI 星语、天文挑战、真实地形观测地图、AR 宇宙云图、本地社区，以及阅读记录与收藏。
+原创观星影片、交互式三维天体、全站横条搜索、统一方框按压按钮、共享天文社区、社区内知识问答、地标历史科普、本地地理概览备用地图，以及第一版已有的文章、知识卡、星空图谱、AR 与收藏。
 
-品牌标识统一为立体土星，支持页面切换与按钮反馈、滚动显现、可移动及隐藏的星语快捷入口。
+共享社区通过 `https://xingyu-shared-community.aptbook6.chatgpt.site` 的服务端 API 保存话题、照片、评论与点赞。每个浏览器使用匿名访客会话，昵称不代表经过验证的实名或注册账户。不同电脑可以读取彼此公开发布的内容；管理自己话题需要保留发布时浏览器中的访客会话。数据库与图片不放在 GitHub 仓库中。
 
-AI 和知识卡是本地知识演示；AR 是科普相机叠加演示；社区、评论和收藏保存在访问者自己的浏览器，未接入账户、云端数据库或真实大模型。地图需要联网加载底图和地形，轨道位置不是实时天象。
+`community-service/` 是完整后端源码，使用 Cloudflare Worker、D1 与 R2，由 Sites 发布。前端继续使用 GitHub Pages；Pages 无法直接执行数据库接口。迁移后端时必须配置真实数据库、图片桶与公开接口地址，不能单独双击后端文件启动云端服务。
+
+AI 回答与知识卡仍是本地知识演示；AR 是相机叠加科普演示。三维模型及镜头未按真实距离比例绘制。外部立体地图加载失败时，本地地理概览与地标科普继续可用。
+
+## 本地直接体验
+
+完整离线启动包中，双击 `启动星语.cmd`。它使用随包附带的 Node 启动本地网站，无需安装依赖。共享社区和在线地图仍需要互联网。请不要双击 `dist/index.html`。
+
+## 原创影片生成
+
+运行 `pnpm dev` 后访问 `/film-render.html`，点击“生成观星影片”。三维镜头源码位于 `src/components/ObservatoryJourney.vue`；导出的 WebM 可以用 FFmpeg 转成 MP4。公开首页播放已经生成的影片，以减少设备性能要求。
+
+## 素材来源
+
+- [NASA SVS CGI Moon Kit](https://svs.gsfc.nasa.gov/4720/)：月球球面纹理及高程。
+- [NASA Blue Marble](https://earthobservatory.nasa.gov/features/BlueMarble)：地球球面纹理。
+- [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/)：公有领域陆地地理数据。
+- 木星、土星的模型表面由代码生成，属于科普示意；真实摄影与其署名见原有素材说明。
+
 
 ## 源码目录
 

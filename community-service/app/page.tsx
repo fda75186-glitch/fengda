@@ -1,0 +1,1 @@
+export default function Home(){return <main style={{maxWidth:700,margin:"15vh auto",padding:32,fontFamily:"sans-serif",color:"#25495e"}}><h1>星语 · 共享星空</h1><p>与天文爱好者一起分享观测、照片与宇宙问题。</p><a href="https://fda75186-glitch.github.io/fengda/#community">前往星语社区</a></main>}
