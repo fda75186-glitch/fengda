@@ -25,7 +25,9 @@ const detailIs3D = computed(() => selectedArticle.value?.explore3d || ['mercury'
 const routes = [{id:'home',label:'首页'},{id:'explore',label:'探索宇宙'},{id:'atlas',label:'星空图谱'},{id:'assistant',label:'AI 星语'},{id:'guide',label:'观测指南'},{id:'ar',label:'AR 宇宙云图'},{id:'community',label:'社区'}];
 const validRoutes=[...routes.map(r=>r.id),'quiz','studio','notebook','publish'];
 const getRoute=()=>validRoutes.includes(location.hash.slice(1))?location.hash.slice(1):'home';
-const route=ref(getRoute()),menu=ref(false),selectedArticle=ref(null),search=ref(''),question=ref(''),toast=ref(''),dialog=ref(null);
+// New visits and reloads start at home; hash changes still handle in-site navigation.
+if(location.hash!=='#home')history.replaceState(history.state,'','#home');
+const route=ref('home'),menu=ref(false),selectedArticle=ref(null),search=ref(''),question=ref(''),toast=ref(''),dialog=ref(null);
 const community=useCommunityStore(),loginOpen=ref(false),targetCommunityPost=ref(null);
 const globalSearchItems=computed(()=>[...articles.map(a=>({id:a.id,kind:'article',label:a.title,description:a.short})),...community.state.posts.map(p=>({id:p.id,kind:'post',label:p.title,description:p.content}))]);
 function openLogin(){loginOpen.value=true}
