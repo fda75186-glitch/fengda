@@ -1,0 +1,11 @@
+{
+  "name": "xingyu-community-013",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-11",
+  "vars": {
+    "ALLOWED_ORIGINS": "https://fda75186-glitch.github.io",
+    "PUBLIC_ORIGIN": "https://your-community-api.example.com"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "xingyu-community-013", "database_id": "REPLACE_WITH_DATABASE_ID", "migrations_dir": "migrations" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "xingyu-community-013-media" }]
+}

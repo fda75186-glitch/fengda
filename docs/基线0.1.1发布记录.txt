@@ -1,0 +1,10 @@
+﻿星语正式版 0.1.1 · 发布成功
+
+用户已确认采用探索宇宙 3D 预览版 3。
+源码仓库：https://github.com/fda75186-glitch/fengda
+线上地址：https://fda75186-glitch.github.io/fengda/?v=0.1.1#home
+提交：1165ecf7e2b79eb0dc41175c2e5ab23eadd3e0da
+GitHub Actions：38061539407，completed / success
+发布记录：https://github.com/fda75186-glitch/fengda/actions/runs/38061539407
+
+仅更新已确认的 3D 探索功能。历史版本保留，后续版本仍先预览，再由用户明确确认后发布。

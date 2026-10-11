@@ -4,6 +4,7 @@ import { createReadStream, existsSync, mkdirSync, openSync, closeSync, readFileS
 import { dirname, extname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createApiServer } from './backend/dev-server.mjs';
 
 const folder = dirname(fileURLToPath(import.meta.url));
 const root = resolve(folder, 'dist');
@@ -12,12 +13,25 @@ const stateFile = resolve(runtime, 'preview.json');
 const identity = createHash('sha256').update(folder).digest('hex');
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.mjs':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json', '.svg':'image/svg+xml', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.png':'image/png', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.woff2':'font/woff2', '.ico':'image/x-icon' };
 
-function serve() {
+async function serve() {
+  mkdirSync(runtime, { recursive:true });
+  const communityApi = await createApiServer({ port:0, dataDir:resolve(runtime,'community-data'), assetsDir:resolve(folder,'public/images') });
   const server = http.createServer((request, response) => {
-    if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
     let pathname;
     try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
     catch { response.writeHead(400); response.end(); return; }
+    if (pathname.startsWith('/api/')) {
+      const upstream = http.request(new URL(request.url, communityApi.url), { method:request.method, headers:{...request.headers,host:new URL(communityApi.url).host} }, reply => {
+        response.writeHead(reply.statusCode || 502, reply.headers);
+        reply.on('error',()=>response.destroy());
+        reply.pipe(response);
+      });
+      upstream.on('error',()=>{if(!response.headersSent)response.writeHead(502,{'Content-Type':'application/json'});response.end(JSON.stringify({error:'社区服务暂时不可用，请重新打开这一版。'}));});
+      request.on('aborted',()=>upstream.destroy());
+      response.on('close',()=>upstream.destroy());
+      request.pipe(upstream);return;
+    }
+    if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405); response.end(); return; }
     if (pathname === '/__xingyu_preview') { response.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-store' }); response.end(JSON.stringify({ identity })); return; }
     const file = resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
     const within = relative(root, file);
@@ -45,7 +59,7 @@ function serve() {
   server.listen(0, '127.0.0.1', () => {
     const port = server.address().port;
     writeFileSync(stateFile, JSON.stringify({ port, identity }));
-    process.send?.({ url:`http://127.0.0.1:${port}/?body=andromeda#explore` });
+    process.send?.({ url:`http://127.0.0.1:${port}/#community` });
     if (process.connected) process.disconnect();
   });
   server.on('error', error => { console.error(error.message); process.exit(1); });
@@ -59,7 +73,7 @@ async function launch() {
     const state = JSON.parse(readFileSync(stateFile, 'utf8'));
     if (state.identity === identity && Number.isInteger(state.port) && state.port > 0 && state.port < 65536) {
       const response = await fetch(`http://127.0.0.1:${state.port}/__xingyu_preview`, { signal:AbortSignal.timeout(1200) });
-      if (response.ok && (await response.json()).identity === identity) url = `http://127.0.0.1:${state.port}/?body=andromeda#explore`;
+      if (response.ok && (await response.json()).identity === identity) url = `http://127.0.0.1:${state.port}/#community`;
     }
   } catch { /* A stale port after a restart simply needs a new server. */ }
   if (!url) {
@@ -74,7 +88,7 @@ async function launch() {
     });
     child.unref();
   }
-  console.log(`StarWhisper 3D preview: ${url}`);
+  console.log(`StarWhisper community preview: ${url}`);
   if (!process.argv.includes('--no-browser')) {
     const browser = spawn('cmd.exe', ['/d', '/c', 'start', '', url], { detached:true, windowsHide:true, stdio:'ignore' });
     browser.on('error', () => console.log(`Open this address in your browser: ${url}`));
@@ -82,5 +96,5 @@ async function launch() {
   }
 }
 
-if (process.argv.includes('--serve')) serve();
+if (process.argv.includes('--serve')) serve().catch(error=>{console.error(error.message);process.exitCode=1;});
 else launch().catch(error => { console.error(error.message); process.exitCode = 1; });

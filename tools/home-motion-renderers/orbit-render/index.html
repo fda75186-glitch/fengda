@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>月球真实摄影机轨迹 · 影片制作</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 24px; background: #101216; color: #e8edf2; font: 15px/1.6 system-ui, sans-serif; }
+      main { max-width: 1440px; margin: auto; }
+      h1 { font-size: 22px; margin: 0 0 8px; }
+      p { color: #a6b5c3; }
+      canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: black; }
+      .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+      button, a.download { padding: 10px 18px; border: 1px solid #55728b; border-radius: 7px; background: #263b4d; color: #fff; font: inherit; cursor: pointer; text-decoration: none; box-shadow: 0 3px 0 #07101a; }
+      button:active { transform: translateY(2px); box-shadow: 0 1px 0 #07101a; }
+      button:disabled { opacity: .45; cursor: wait; }
+      label { display: flex; gap: 12px; align-items: center; }
+      input[type=range] { width: 320px; max-width: 55vw; }
+      progress { width: 260px; height: 14px; }
+      #download[hidden] { display: none; }
+      .note { font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>单个连续月球镜头 · 10 秒独立影片</h1>
+      <p>月球先以小月轮出现，摄影机连续推进并绕月一周，完成后立即结束。此页用于制作影片，界面不会录入画面。</p>
+      <canvas id="film" aria-label="月球轨道摄影机影片画面"></canvas>
+      <div class="toolbar">
+        <button id="play" disabled>播放轨迹</button>
+        <button id="record" disabled>开始录制</button>
+        <button id="offline" disabled>逐帧导出</button>
+        <button id="reset" disabled>回到起点</button>
+        <a id="download" class="download" hidden download="moon-camera-orbit.webm">下载绕月影片</a>
+      </div>
+      <div class="toolbar">
+        <label>镜头时间 <input id="seek" type="range" min="0" max="10" step="0.033333" value="0" disabled /><output id="time">0.00 / 10.00 秒</output></label>
+        <progress id="progress" value="0" max="10"></progress>
+        <span id="status" role="status">加载 NASA 月球颜色与高程数据…</span>
+      </div>
+      <p class="note">逐帧导出固定生成 300 帧，不依赖浏览器实时播放速度；导出可能超过 10 秒。1920 × 1080 · 30 fps · 无声 · 月球 LROC/LOLA 数据：NASA SVS CGI Moon Kit（4720）。本段不含经纬线、标注叠图或 NASA 4619 影片；距离、飞行时间及地球方向为叙事设计，不代表任务轨道。</p>
+    </main>
+    <script type="module" src="/src.js"></script>
+  </body>
+</html>

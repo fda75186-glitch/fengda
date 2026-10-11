@@ -1,0 +1,62 @@
+{
+  "duration": 31.07,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "audio": false,
+  "bytes": 12830950,
+  "chapters": [
+    {
+      "shot": 1,
+      "title": "第一人称移向目镜并推进",
+      "source": "telescope-camera.webm",
+      "source_start": 0,
+      "source_length": 7.9,
+      "speed": 1,
+      "reverse": false,
+      "output_start": 0.0,
+      "duration": 7.93
+    },
+    {
+      "shot": 2,
+      "title": "连续接近月球并环绕一周，仅一次月球主镜头",
+      "source": "moon-camera-orbit.webm",
+      "source_start": 0,
+      "source_length": 10.0,
+      "speed": 1,
+      "reverse": false,
+      "output_start": 7.93,
+      "duration": 10.0
+    },
+    {
+      "shot": 3,
+      "title": "飞向地球，省略再次掠过月球的画面",
+      "source": "NASA-5039-moon-to-earth-1080p.mp4",
+      "source_start": 20.0,
+      "source_length": 10.0,
+      "speed": 1.1,
+      "reverse": false,
+      "output_start": 17.93,
+      "duration": 9.1
+    },
+    {
+      "shot": 4,
+      "title": "从目镜退回地面观星视角",
+      "source": "telescope-camera.webm",
+      "source_start": 0,
+      "source_length": 4.0,
+      "speed": 1,
+      "reverse": true,
+      "output_start": 27.03,
+      "duration": 4.03
+    }
+  ],
+  "status": "preview awaiting user approval",
+  "moon_motion": "One continuous approach and camera orbit. No separate lunar approach/flyby chapter.",
+  "removed": [
+    "NASA 4619 lunar approach with orbit line",
+    "NASA 5039 repeated lunar flyby",
+    "return eyepiece lunar close-up"
+  ],
+  "nature": "Creative CG first-person optical bridge + NASA scientific data visualization"
+}

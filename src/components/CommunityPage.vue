@@ -1,68 +1,230 @@
 <script setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { BookOpen, MessageCircle, Plus, Search, Sparkles, Telescope, X } from '@lucide/vue';
 import { assetUrl } from '../assets.js';
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
-import { ArrowRight, ArrowUpRight, Heart, MessageCircle, Plus, Search, Send, X } from '@lucide/vue';
+import { useCommunityStore } from '../communityClient.js';
 import SaturnLogo from './SaturnLogo.vue';
-import { addCommunityComment, communityCategories, createCommunityPost, restoreCommunity, toggleCommunityLike } from '../community.js';
+import CommunityPostCard from './CommunityPostCard.vue';
+import { capturePostSurface, morphPostSurface } from '../postMorph.js';
+import '../community-feed.css';
 
-const emit = defineEmits(['ask', 'navigate']);
-const storageKey = 'xingyu-community-v1';
-const notice = ref(''), query = ref(''), category = ref('全部'), posts = ref([]);
-const composer = ref(null), detailDialog = ref(null), activeId = ref(null), draftError = ref(''), commentError = ref(''), comment = ref('');
-const draft = ref({ title: '', content: '', category: '观星日记' });
-try {
-  const restored = restoreCommunity(localStorage.getItem(storageKey)); posts.value = restored.posts;
-  if (restored.recovered) notice.value = '本机保存的数据无法读取，已恢复精选示例。';
-} catch { posts.value = restoreCommunity(null).posts; notice.value = '当前浏览器无法使用本机存储。发布、点赞和评论在本次访问中有效。'; }
-const filtered = computed(() => posts.value.filter(post => (category.value === '全部' || post.category === category.value) && `${post.title} ${post.content}`.toLowerCase().includes(query.value.trim().toLowerCase())));
-const activePost = computed(() => posts.value.find(post => post.id === activeId.value));
-const localCount = computed(() => posts.value.filter(post => !post.example).length);
-function id() { return globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`; }
-function dateLabel(time) { return time ? new Date(time).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric' }) : '精选示例'; }
-function save(message) {
-  try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, posts: posts.value })); notice.value = message; }
-  catch { notice.value = '本机存储不可用，刚才的操作在本次访问中有效，刷新后无法保留。'; }
+const props = defineProps({ initialPost: String });
+const emit = defineEmits(['ask', 'navigate', 'login', 'notify', 'viewed']);
+const store = useCommunityStore();
+const categories = ['全部', '观星日记', '天文问答', '摄影分享', '学习交流'];
+const channels = [
+  { id: 'all', name: '全部社区', image: 'starfield-night', description: '在这里，分享你的宇宙', keywords: [] },
+  { id: 'moon', name: '月球观察', image: 'moon', description: '记录每一天不同的月亮', keywords: ['月球', '月亮', '月相'] },
+  { id: 'planet', name: '行星世界', image: 'saturn', description: '从地球出发，认识太阳系', keywords: ['行星', '水星', '金星', '火星', '木星', '土星', '天王星', '海王星', '地球'] },
+  { id: 'photo', name: '星空摄影', image: 'starfield-night', description: '把抬头的瞬间留在照片里', category: '摄影分享', keywords: [] },
+  { id: 'deep', name: '深空探索', image: 'andromeda', description: '星系、星云与更远的故事', keywords: ['星系', '星云', '仙女座', '黑洞', '深空'] },
+  { id: 'gear', name: '器材交流', image: 'telescope-night', description: '聊聊望远镜与拍摄经验', keywords: ['器材', '设备', '望远镜', '相机', '支架', '拍摄'] },
+  { id: 'question', name: '天文问答', image: 'earth', description: '每一个问题，都是新的起点', category: '天文问答', keywords: [] },
+];
+const featuredTopics = [{ label: '今晚的月亮', query: '月亮' }, { label: '第一次观星', query: '第一次' }, { label: '我的星空照片', query: '星空' }, { label: '望远镜怎么选', query: '望远镜' }];
+const query = ref(''), category = ref('全部'), channelId = ref('all');
+const sortBy = ref('recommend'), notice = ref(''), loadError = ref('');
+const busyIds = ref(new Set()), activeId = ref(null), detailDialog = ref(null), communityHub = ref(null);
+const comment = ref(''), commentError = ref(''), submitting = ref(false);
+const detailClosing = ref(false);
+const detailOpening = ref(false);
+const detailBody = ref(null), morphHost = ref(null);
+let focusBeforeDialog;
+let detailMotion, originCard;
+let scrollLockOwned = false, savedScroll;
+const channel = computed(() => channels.find(item => item.id === channelId.value) || channels[0]);
+const allPosts = computed(() => Array.isArray(store.state.posts) ? store.state.posts : []);
+const filtered = computed(() => {
+  const keyword = query.value.trim().toLowerCase();
+  const result = allPosts.value.filter(post => {
+    const text = `${post.title || ''} ${post.content || ''} ${(post.topics || []).join(' ')} ${post.author?.name || ''}`.toLowerCase();
+    const chosen = channel.value;
+    const categoryMatch = category.value === '全部' || post.category === category.value;
+    const channelMatch = chosen.id === 'all' || (chosen.category ? post.category === chosen.category : chosen.keywords.some(word => text.includes(word)));
+    return categoryMatch && channelMatch && (!keyword || text.includes(keyword));
+  });
+  if (sortBy.value === 'latest') return [...result].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (sortBy.value === 'popular') return [...result].sort((a, b) => (b.likeCount || 0) + (b.commentCount || 0) * 2 - (a.likeCount || 0) - (a.commentCount || 0) * 2);
+  return result;
+});
+const activePost = computed(() => allPosts.value.find(post => post.id === activeId.value));
+const comments = computed(() => Array.isArray(activePost.value?.comments) ? activePost.value.comments : []);
+const errorMessage = computed(() => loadError.value || store.state.error || '');
+const popularChannels = computed(() => channels.filter(item => item.id !== 'all').slice(0, 5));
+
+async function load() {
+  loadError.value = '';
+  try { await store.loadPosts(); }
+  catch (error) { loadError.value = error.message || '社区暂时无法加载，请稍后再试。'; }
 }
-async function openComposer() { draftError.value = ''; await nextTick(); composer.value?.showModal(); }
-function publish() {
-  try {
-    const post = createCommunityPost(draft.value, id(), Date.now());
-    posts.value = [post, ...posts.value]; category.value = '全部'; query.value = '';
-    draft.value = { title: '', content: '', category: '观星日记' }; composer.value.close(); save('你的讨论已发布并保存在本机。');
-  } catch (error) { draftError.value = error.message; }
+function selectChannel(item) { channelId.value = item.id; category.value = '全部'; query.value = ''; }
+function searchTopic(topic) { channelId.value = 'all'; category.value = '全部'; query.value = topic; }
+function clearFilters() { category.value = '全部'; channelId.value = 'all'; query.value = ''; }
+function publish() { emit('navigate', 'publish'); }
+function requireLogin() { emit('login'); }
+function feedback(message) { notice.value = message; emit('notify', message); }
+async function like(post) {
+  if (!store.state.user) return requireLogin();
+  if (busyIds.value.has(post.id)) return;
+  busyIds.value = new Set([...busyIds.value, post.id]);
+  try { await store.likePost(post.id); }
+  catch (error) { feedback(error.message || '暂时无法点赞，请稍后再试。'); }
+  finally { const remaining = new Set(busyIds.value); remaining.delete(post.id); busyIds.value = remaining; }
 }
-async function openPost(post) { activeId.value = post.id; comment.value = ''; commentError.value = ''; await nextTick(); detailDialog.value?.showModal(); }
-function like(post) { posts.value = toggleCommunityLike(posts.value, post.id); save(post.liked ? '已取消喜欢。' : '已喜欢这条讨论，保存在本机。'); }
-function postComment() {
-  try {
-    posts.value = addCommunityComment(posts.value, activeId.value, comment.value, id(), Date.now());
-    comment.value = ''; commentError.value = ''; save('评论已保存在本机。');
-  } catch (error) { commentError.value = error.message; }
+function stopDetailMotion() {
+  detailMotion?.dispose();
+  detailMotion = null;
 }
-function ask() { const question = activePost.value?.title; detailDialog.value?.close(); if (question) emit('ask', question); }
-function backdropClose(event) { if (event.target !== event.currentTarget) return; const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) event.currentTarget.close(); }
-onBeforeUnmount(() => { composer.value?.close(); detailDialog.value?.close(); });
+function restoreScroll() {
+  if (!scrollLockOwned) return;
+  document.documentElement.classList.remove('ch-post-modal-active');
+  if (savedScroll) window.scrollTo({ left: savedScroll.x, top: savedScroll.y, behavior: 'instant' });
+  scrollLockOwned = false;
+}
+function reduceMotion() { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+async function finishOpening() {
+  const motion = detailMotion;
+  detailOpening.value = false;
+  await nextTick();
+  if (detailMotion === motion && !detailClosing.value) {
+    stopDetailMotion();
+    detailDialog.value?.querySelector('.ch-detail-top button')?.focus({ preventScroll: true });
+  }
+}
+async function openPost(post, event) {
+  if (detailDialog.value?.open) return;
+  stopDetailMotion();
+  detailClosing.value = false;
+  activeId.value = post.id; comment.value = ''; commentError.value = '';
+  focusBeforeDialog = document.activeElement;
+  originCard = event?.currentTarget?.closest?.('.ch-post') || [...(communityHub.value?.querySelectorAll('.ch-post[data-post-id]') || [])].find(card => card.dataset.postId === String(post.id));
+  const origin = originCard?.isConnected && !reduceMotion() ? capturePostSurface(originCard, originCard, true) : null;
+  detailOpening.value = Boolean(origin);
+  savedScroll = { x: window.scrollX, y: window.scrollY };
+  scrollLockOwned = !document.documentElement.classList.contains('ch-post-modal-active');
+  document.documentElement.classList.add('ch-post-modal-active');
+  await nextTick();
+  const panel = detailDialog.value;
+  if (!panel) { restoreScroll(); return; }
+  panel.showModal();
+  panel.scrollTop = 0;
+  if (!origin || !panel.animate) return finishOpening();
+  const destination = capturePostSurface(detailBody.value, panel);
+  detailMotion = morphPostSurface(morphHost.value, origin, destination, true, finishOpening);
+}
+function finishClose() {
+  // Remove the top layer before disposing the final frame, so the source card is the next paint.
+  detailDialog.value?.close();
+  stopDetailMotion();
+  restoreScroll();
+}
+function closePost() {
+  const panel = detailDialog.value;
+  if (!panel?.open || detailClosing.value) return;
+  if (reduceMotion() || !originCard?.isConnected || !panel.animate) return finishClose();
+  detailClosing.value = true;
+  if (detailOpening.value && detailMotion) {
+    detailMotion.reverse(finishClose);
+    return;
+  }
+  const from = capturePostSurface(detailBody.value, panel);
+  const to = capturePostSurface(originCard, originCard, true);
+  stopDetailMotion();
+  detailMotion = morphPostSurface(morphHost.value, from, to, false, finishClose);
+}
+function afterClose() {
+  stopDetailMotion();
+  restoreScroll();
+  detailOpening.value = false;
+  detailClosing.value = false;
+  activeId.value = null;
+  originCard = null;
+  if (focusBeforeDialog?.isConnected) focusBeforeDialog.focus?.({ preventScroll: true });
+}
+function backdropClose(event) {
+  if (event.target !== event.currentTarget) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closePost();
+}
+async function postComment() {
+  if (!store.state.user) return requireLogin();
+  if (!comment.value.trim() || submitting.value || !activePost.value) return;
+  submitting.value = true; commentError.value = '';
+  try { await store.addComment(activeId.value, comment.value.trim()); comment.value = ''; }
+  catch (error) { commentError.value = error.message || '评论发布失败，请稍后再试。'; }
+  finally { submitting.value = false; }
+}
+function commentKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+  event.preventDefault(); postComment();
+}
+function ask() { const question = activePost.value?.title; if (question) { closePost(); emit('ask', question); } }
+function timeLabel(value) {
+  if (!value) return '精选科普';
+  const elapsed = Math.max(0, Date.now() - value);
+  if (elapsed < 60_000) return '刚刚';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前`;
+  return new Date(value).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+}
+watch(() => [props.initialPost, allPosts.value], async () => {
+  if (!props.initialPost) return;
+  const post=allPosts.value.find(post=>post.id===props.initialPost);
+  if(post){await openPost(post);emit('viewed');}
+}, {immediate:true});
+onMounted(load);
+onBeforeUnmount(finishClose);
 </script>
 
 <template>
-  <div class="community-page page-shell">
-    <header class="community-heading"><div><span class="light-eyebrow">08 / 好奇，让我们相遇</span><h1>一起，仰望同一片星空。</h1><p>分享一次观察，记录一个问题，把宇宙讲给彼此听。</p></div><button class="button primary" @click="openComposer"><Plus :size="18" />发布讨论</button></header>
-    <section class="community-intro"><div class="community-intro-copy"><SaturnLogo :size="55" /><div><h2>星语社区</h2><p>访客 · 本地社区演示</p></div></div><p>精选内容是示例话题。你发布的讨论、评论与喜欢只保存在这台设备的浏览器中。</p><span>{{ localCount }} 条本机讨论</span></section>
-    <div class="community-toolbar"><div class="community-tabs" aria-label="讨论分类"><button v-for="item in ['全部', ...communityCategories]" :key="item" :class="{ selected: category === item }" :aria-pressed="category === item" @click="category = item">{{ item }}</button></div><label class="community-search"><Search :size="17" /><input v-model="query" aria-label="搜索社区讨论" placeholder="搜索讨论…" /><button v-if="query" class="icon-button" aria-label="清除搜索" @click="query = ''"><X :size="15" /></button></label></div>
-    <p v-if="notice" class="community-notice" role="status">{{ notice }}</p>
-    <div v-if="filtered.length" class="community-feed"><article v-for="post in filtered" :key="post.id" class="community-post"><button v-if="post.image" class="community-cover" :aria-label="`阅读讨论：${post.title}`" @click="openPost(post)"><img :src="assetUrl(`/images/${post.image}.jpg`)" :alt="post.title" loading="lazy" /><ArrowUpRight :size="20" /></button><div class="community-post-body"><div class="community-post-meta"><span>{{ post.category }}</span><small>{{ post.example ? '精选示例话题' : '我 · 本机访客' }}</small></div><h2><button @click="openPost(post)">{{ post.title }}</button></h2><p>{{ post.content }}</p><div class="community-post-bottom"><span>{{ dateLabel(post.createdAt) }}</span><div><button :class="{ liked: post.liked }" :aria-pressed="post.liked" :aria-label="`${post.liked ? '取消喜欢' : '喜欢'}：${post.title}`" @click="like(post)"><Heart :size="16" />{{ post.liked ? '已喜欢' : '喜欢' }}</button><button @click="openPost(post)"><MessageCircle :size="16" />{{ post.comments.length ? `${post.comments.length} 条本机评论` : '聊一聊' }}</button></div></div></div></article></div>
-    <div v-else class="community-empty"><Search :size="28" /><h2>还没有这类讨论</h2><p>换个关键词看看，或分享你的第一个天文问题。</p><button class="button secondary" @click="openComposer">发布讨论 <Plus :size="16" /></button></div>
-    <div class="community-ending"><div><span class="light-eyebrow">把观察，变成自己的知识</span><h2>在交流前，也可以先问问星语。</h2></div><button class="text-button" @click="emit('navigate', 'assistant')">打开 AI 星语 <ArrowRight :size="17" /></button></div>
-
-    <dialog ref="composer" class="community-dialog" aria-labelledby="community-compose-title" @click="backdropClose"><header><div><span class="light-eyebrow">分享你的好奇</span><h2 id="community-compose-title">发布一条讨论</h2></div><button class="icon-button" aria-label="关闭发布讨论" @click="composer.close()"><X :size="21" /></button></header><form @submit.prevent="publish"><label>讨论分类<select v-model="draft.category"><option v-for="item in communityCategories" :key="item">{{ item }}</option></select></label><label>标题<input v-model="draft.title" autofocus required minlength="4" maxlength="80" placeholder="用一句话，说说你想分享什么" /></label><label>正文<textarea v-model="draft.content" required minlength="10" maxlength="2000" rows="7" placeholder="你的观察、问题，或者一段学习心得…"></textarea></label><div class="community-draft-count">{{ draft.content.length }} / 2000</div><p v-if="draftError" class="community-form-error" role="alert">{{ draftError }}</p><footer><span>讨论只保存在本机，不会发送到网络。</span><button class="button primary" type="submit">发布讨论 <ArrowUpRight :size="16" /></button></footer></form></dialog>
-    <dialog ref="detailDialog" class="community-dialog community-detail" aria-labelledby="community-detail-title" @click="backdropClose"><template v-if="activePost"><header><div><span class="light-eyebrow">{{ activePost.category }} · {{ activePost.example ? '精选示例话题' : '我的本机讨论' }}</span><h2 id="community-detail-title">{{ activePost.title }}</h2></div><button class="icon-button" aria-label="关闭讨论详情" @click="detailDialog.close()"><X :size="21" /></button></header><div class="community-detail-meta"><SaturnLogo :size="32" /><span>{{ activePost.example ? '星语编辑示例' : '我 · 本机访客' }}</span><small>{{ dateLabel(activePost.createdAt) }}</small></div><img v-if="activePost.image" class="community-detail-image" :src="assetUrl(`/images/${activePost.image}.jpg`)" :alt="activePost.title" /><p class="community-detail-content">{{ activePost.content }}</p><div class="community-detail-actions"><button :class="{ liked: activePost.liked }" :aria-pressed="activePost.liked" @click="like(activePost)"><Heart :size="17" />{{ activePost.liked ? '已喜欢' : '喜欢这条讨论' }}</button><button @click="ask">问问星语 <ArrowUpRight :size="16" /></button></div><section class="community-comments"><h3>本机评论 <span>{{ activePost.comments.length }}</span></h3><p v-if="!activePost.comments.length" class="community-comments-empty">还没有评论。写下你的想法，开启这次讨论。</p><article v-for="item in activePost.comments" :key="item.id"><div><span>我 · 本机访客</span><small>{{ dateLabel(item.createdAt) }}</small></div><p>{{ item.content }}</p></article><form @submit.prevent="postComment"><label for="community-comment">写一条评论</label><textarea id="community-comment" v-model="comment" required maxlength="500" rows="3" placeholder="分享你的观察与想法…"></textarea><p v-if="commentError" class="community-form-error" role="alert">{{ commentError }}</p><div><small>{{ comment.length }} / 500 · 只保存在本机</small><button class="button primary" type="submit" :disabled="!comment.trim()">发表评论 <Send :size="16" /></button></div></form></section></template></dialog>
+  <div ref="communityHub" class="community-hub">
+    <h1 class="ch-visually-hidden">星语社区</h1>
+    <div class="ch-container">
+      <form class="ch-search" role="search" @submit.prevent>
+        <Search :size="21" aria-hidden="true" />
+        <label class="ch-visually-hidden" for="community-feed-search">搜索社区内容</label>
+        <input id="community-feed-search" v-model="query" type="search" placeholder="搜索观星日记、天文问题、摄影与器材…" autocomplete="off" />
+        <button v-if="query" type="button" class="ch-icon-button" aria-label="清空社区搜索" @click="query = ''"><X :size="18" /></button>
+        <span class="ch-search-caption">星语社区</span>
+      </form>
+      <div class="ch-layout">
+        <section class="ch-main-column" aria-label="社区内容">
+          <nav class="ch-channels" aria-label="天文社区分区">
+            <button v-for="item in channels" :key="item.id" class="ch-channel" :class="{ 'is-selected': channelId === item.id }" :aria-pressed="channelId === item.id" @click="selectChannel(item)"><span class="ch-channel-image"><img :src="assetUrl(`/images/${item.image}.jpg`)" alt="" loading="lazy" /></span><span>{{ item.name }}</span></button>
+          </nav>
+          <div class="ch-feed-bar"><div class="ch-feed-category" aria-label="内容分类"><button v-for="item in categories" :key="item" :class="{ 'is-selected': category === item }" :aria-pressed="category === item" @click="category = item">{{ item }}</button></div><label class="ch-sort"><span class="ch-visually-hidden">内容排序</span><select v-model="sortBy"><option value="recommend">推荐</option><option value="latest">最新</option><option value="popular">热议</option></select></label></div>
+          <div v-if="channelId !== 'all' || query" class="ch-filter-summary"><span>{{ query ? `“${query}”的搜索结果` : channel.name }} <small>{{ filtered.length }} 条内容</small></span><button class="ch-quiet-button" @click="clearFilters">查看全部</button></div>
+          <div v-if="errorMessage" class="ch-status ch-error" role="alert"><p>{{ errorMessage }}</p><button class="ch-button" @click="load">重新加载</button></div>
+          <div v-if="notice" class="ch-status ch-notice" role="status"><span>{{ notice }}</span><button class="ch-icon-button" aria-label="关闭提示" @click="notice = ''"><X :size="16" /></button></div>
+          <div v-if="store.state.loading && !allPosts.length" class="ch-loading" aria-busy="true" aria-label="正在加载社区内容"><div v-for="item in 3" :key="item" class="ch-skeleton"><div class="ch-skeleton-author"></div><div class="ch-skeleton-title"></div><div class="ch-skeleton-text"></div><div class="ch-skeleton-image"></div></div></div>
+          <div v-else-if="filtered.length" class="ch-feed"><CommunityPostCard v-for="post in filtered" :key="post.id" :post="post" :busy="busyIds.has(post.id)" @open="openPost(post, $event)" @like="like(post)" @topic="searchTopic" /><div class="ch-feed-end"><SaturnLogo :size="27" /><span>你已经看完这些内容了，把你的发现也分享给大家吧。</span><button class="ch-quiet-button" @click="publish">发布内容</button></div></div>
+          <div v-else class="ch-empty"><Telescope :size="39" /><h2>{{ query ? '还没有找到相关内容' : '这里还在等待新的发现' }}</h2><p>{{ query ? '试试“月亮”“星空摄影”或更简短的关键词。' : '分享一次观察、一张照片，或一个让你好奇的问题。' }}</p><div><button class="ch-button" @click="clearFilters">查看全部内容</button><button class="ch-button ch-primary" @click="publish">发布内容</button></div></div>
+        </section>
+        <aside class="ch-sidebar" aria-label="社区推荐，可独立滚动" tabindex="0">
+          <section class="ch-panel ch-welcome"><div class="ch-welcome-brand"><SaturnLogo :size="48" /><div><h2>星语社区</h2><p>每一份好奇，都值得被看见。</p></div></div><p class="ch-welcome-description">记录你的夜晚，分享你发现的星空。和天文爱好者一起，让宇宙离我们更近一点。</p><button class="ch-button ch-primary ch-wide" @click="publish"><Plus :size="17" />发布内容</button><button v-if="!store.state.user" class="ch-quiet-button ch-login-invite" @click="requireLogin">登录，加入这片星空</button><p v-else class="ch-signed-in">欢迎回来，{{ store.state.user.name }}</p></section>
+          <section class="ch-panel ch-popular"><h2>热门天文社区</h2><div v-for="item in popularChannels" :key="item.id" class="ch-popular-row"><img :src="assetUrl(`/images/${item.image}.jpg`)" alt="" loading="lazy" /><div><strong>{{ item.name }}</strong><span>{{ item.description }}</span></div><button class="ch-button ch-mini" :aria-label="`查看${item.name}社区`" @click="selectChannel(item)">查看</button></div></section>
+          <section class="ch-panel ch-topics"><h2>一起聊聊</h2><button v-for="topic in featuredTopics" :key="topic.label" @click="searchTopic(topic.query)"><span>#</span>{{ topic.label }}</button></section>
+          <section class="ch-panel ch-newcomer"><h2>第一次来到星语？</h2><button @click="emit('navigate', 'guide')"><Telescope :size="20" /><span><strong>从抬头看天空开始</strong><small>找到适合自己的观测方式</small></span></button><button @click="emit('navigate', 'quiz')"><BookOpen :size="20" /><span><strong>天文知识挑战</strong><small>在社区里，练习新的知识</small></span></button><button @click="emit('ask', '我是第一次观星，应该从哪里开始？')"><Sparkles :size="20" /><span><strong>问问 AI 星语</strong><small>把好奇交给你的天文伙伴</small></span></button></section>
+          <p class="ch-sidebar-footnote">星语 STARWHISPER<br />和每一个好奇的人，仰望同一片星空。</p>
+        </aside>
+      </div>
+    </div>
+    <dialog ref="detailDialog" class="ch-detail-dialog" :class="{ 'is-morphing': detailOpening || detailClosing }" aria-labelledby="community-detail-title" @click="backdropClose" @cancel.prevent="closePost" @close="afterClose">
+      <div ref="detailBody" class="ch-detail-body">
+      <template v-if="activePost">
+        <div class="ch-detail-top"><span>{{ activePost.category || '星语社区' }}</span><button class="ch-icon-button" aria-label="关闭内容详情" autofocus @click="closePost"><X :size="23" /></button></div>
+        <CommunityPostCard :post="activePost" :busy="busyIds.has(activePost.id)" full @like="like(activePost)" @topic="topic => { closePost(); searchTopic(topic); }" />
+        <div class="ch-detail-ask"><span>对这个话题还有疑问？</span><button class="ch-button" @click="ask"><Sparkles :size="16" />问问星语</button></div>
+        <section class="ch-comments" aria-labelledby="community-comment-title">
+          <h2 id="community-comment-title">评论 <span>{{ activePost.commentCount || comments.length }}</span></h2>
+          <p v-if="!comments.length" class="ch-comment-empty">还没有评论，分享你的观察与想法吧。</p>
+          <article v-for="item in comments" :key="item.id" class="ch-comment"><span class="ch-avatar"><img v-if="item.author?.avatar" :src="item.author.avatar" alt="" /><SaturnLogo v-else :size="29" /></span><div><div class="ch-comment-meta"><strong>{{ item.author?.name || '星语爱好者' }}</strong><time>{{ timeLabel(item.createdAt) }}</time></div><p>{{ item.content }}</p></div></article>
+          <form v-if="store.state.user" class="ch-comment-form" @submit.prevent="postComment"><label for="community-comment">写下你的想法</label><textarea id="community-comment" v-model="comment" maxlength="500" rows="3" placeholder="分享你的观察、经验，或对这个话题的疑问…" @keydown="commentKeydown"></textarea><p v-if="commentError" class="ch-comment-error" role="alert">{{ commentError }}</p><div><small>{{ comment.length }}/500 · Enter 发布，Shift + Enter 换行</small><button class="ch-button ch-primary" :disabled="!comment.trim() || submitting" type="submit">{{ submitting ? '发布中…' : '发表评论' }}</button></div></form>
+          <div v-else class="ch-comment-login"><MessageCircle :size="20" /><span>登录后，和大家聊聊你的发现。</span><button class="ch-button ch-primary" @click="requireLogin">登录</button></div>
+        </section>
+      </template>
+      </div>
+      <div ref="morphHost" class="ch-morph-host" aria-hidden="true"></div>
+    </dialog>
   </div>
 </template>
-
-<style scoped>
-.community-page{--community-ink:#18242e;--community-muted:#718399;color:var(--community-ink)}.community-heading{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:38px}.community-heading h1{font-size:38px;line-height:1.5;margin:15px 0 14px}.community-heading p{font-size:14px;color:var(--community-muted);margin:0}.community-heading>.button{align-self:flex-end}.community-intro{display:flex;align-items:center;gap:28px;padding:26px 28px;border:1px solid #dfe8ef;border-radius:7px;background:#f6f9fb}.community-intro-copy{display:flex;align-items:center;gap:14px;flex-shrink:0}.community-intro-copy h2{font-size:18px;font-weight:500;margin:0 0 7px}.community-intro-copy p{font-size:10px;color:#70879a;margin:0}.community-intro>p{font-size:12px;color:#71869a;line-height:1.9;margin:0;max-width:440px}.community-intro>span{margin-left:auto;white-space:nowrap;font-size:11px;color:#647f92}.community-toolbar{display:flex;align-items:center;gap:28px;justify-content:space-between;margin:36px 0 25px}.community-tabs{display:flex;gap:8px;flex-wrap:wrap}.community-tabs button{padding:10px 14px;font-size:12px;color:#778c9f;border-radius:5px;border:1px solid transparent}.community-tabs button.selected{background:#eff5f8;border-color:#ccdae5;color:#315a72}.community-tabs button:hover{background:#f0f5f8}.community-search{display:flex;align-items:center;gap:9px;border-bottom:1px solid #d5e0e9;padding:10px 0;color:#8ca1b3;min-width:210px}.community-search input{border:0;background:transparent;color:#466277;outline-offset:6px;min-width:0;width:170px;font-size:12px}.community-search input::placeholder{color:#8da0b3}.community-search>.icon-button{width:22px;height:22px}.community-notice{padding:12px 16px;background:#eef5f8;color:#436278;border-radius:5px;font-size:11px}.community-feed{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}.community-post{display:flex;flex-direction:column;border:1px solid #e0e8ef;border-radius:7px;overflow:hidden;background:white;transition:transform .22s,border-color .22s}.community-post:hover{border-color:#bacddb;transform:translateY(-3px)}.community-cover{height:215px;position:relative;overflow:hidden;padding:0;text-align:left;background:#06101b}.community-cover img{height:100%;object-fit:cover;transition:transform .6s,filter .4s}.community-cover:hover img{transform:scale(1.04);filter:brightness(1.12)}.community-cover>svg{position:absolute;bottom:20px;right:20px;color:#fff}.community-post-body{padding:26px;display:flex;flex-direction:column;flex:1}.community-post-meta{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:18px;font-size:10px;color:#72879b}.community-post-meta>span{color:#4e718a}.community-post-meta small{font-size:9px}.community-post h2{font-size:19px;font-weight:500;line-height:1.65;margin:0 0 13px}.community-post h2 button{padding:0;text-align:left}.community-post h2 button:hover{color:#497895}.community-post-body>p{font-size:12px;color:#6c8091;line-height:1.9;margin:0 0 24px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.community-post-bottom{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:18px;margin-top:auto;border-top:1px solid #edf1f5}.community-post-bottom>span{font-size:9px;color:#8798aa}.community-post-bottom>div{display:flex;gap:20px}.community-post-bottom button{display:flex;align-items:center;gap:7px;font-size:10px;color:#6e8697;padding:4px 0}.community-post-bottom button:hover,.community-detail-actions button:hover{color:#315d76}.community-post-bottom button.liked,.community-detail-actions button.liked{color:#bb725e}.liked svg{fill:#bb725e22}.community-empty{text-align:center;padding:70px 20px;color:#798ea1}.community-empty>svg{margin-bottom:20px}.community-empty h2{font-size:22px;color:#315269}.community-empty p{font-size:12px;margin-bottom:25px}.community-ending{display:flex;justify-content:space-between;align-items:center;gap:30px;border-top:1px solid #e3eaf0;margin-top:55px;padding-top:36px}.community-ending h2{font-size:22px;font-weight:500;margin:14px 0 0}.community-ending .text-button{font-size:12px;white-space:nowrap}.community-dialog{width:min(660px,calc(100% - 36px));max-height:88dvh;overflow:auto;color:#20303c;background:#fff;border:1px solid #d9e3eb;border-radius:12px;padding:32px;margin:auto;box-shadow:0 24px 100px #142b4930;color-scheme:light}.community-dialog::backdrop{background:#0a17285c;backdrop-filter:blur(5px)}.community-dialog[open]{animation:community-dialog-in .25s ease-out}.community-dialog>header{display:flex;gap:22px;align-items:flex-start;justify-content:space-between;margin-bottom:27px}.community-dialog>header>div{min-width:0}.community-dialog>header h2{font-size:25px;font-weight:500;line-height:1.5;margin:12px 0 0;overflow-wrap:anywhere}.community-dialog>header>.icon-button{flex-shrink:0}.community-dialog label{display:flex;flex-direction:column;gap:9px;font-size:12px;color:#4f6b80;margin-bottom:20px}.community-dialog input,.community-dialog textarea,.community-dialog select{width:100%;padding:13px 14px;color:#334f63;background:#f9fbfc;border:1px solid #dce6ed;border-radius:5px;outline-offset:3px;font-size:13px;line-height:1.8;resize:vertical}.community-dialog textarea{min-height:94px}.community-dialog input::placeholder,.community-dialog textarea::placeholder{color:#99a9b9}.community-dialog form>footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:24px}.community-dialog form>footer>span{font-size:10px;color:#8296a8}.community-draft-count{text-align:right;font:10px Arial,sans-serif;color:#91a2b2;margin-top:-10px}.community-form-error{font-size:12px;color:#a04c39;background:#fff1ed;padding:10px 13px;border-radius:4px;line-height:1.8}.community-detail-meta{display:flex;align-items:center;gap:10px;color:#6c8497;font-size:11px;margin-bottom:22px}.community-detail-meta small{margin-left:auto;font-size:10px}.community-detail-image{height:235px;object-fit:cover;border-radius:5px;background:#07111c;margin-bottom:24px}.community-detail-content{font-size:14px;color:#536c80;line-height:2;white-space:pre-wrap;overflow-wrap:anywhere}.community-detail-actions{display:flex;align-items:center;gap:20px;padding:14px 0 27px}.community-detail-actions button{display:flex;align-items:center;gap:8px;color:#6f8697;font-size:11px}.community-comments{border-top:1px solid #e4ebf0;padding-top:24px}.community-comments h3{font-size:16px;font-weight:500;margin:0 0 22px}.community-comments h3>span{font-size:11px;color:#8da1b1;margin-left:7px}.community-comments-empty{font-size:12px;color:#91a1af}.community-comments>article{border-bottom:1px solid #edf1f4;margin-bottom:20px;padding-bottom:13px}.community-comments>article>div{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#7290a2}.community-comments>article small{font-size:9px}.community-comments>article p{font-size:13px;line-height:1.9;color:#5d778a;white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0 0}.community-comments>form{margin-top:25px}.community-comments>form>div{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:15px}.community-comments>form>div small{font-size:9px;color:#8aa0b2}.community-comments>form>label{margin-bottom:10px}.community-comments .button{font-size:11px}.community-detail :deep(.saturn-logo){object-fit:contain}.community-dialog .button{font-size:12px;gap:10px}
-@keyframes community-dialog-in{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:translateY(0)}}
-@media(max-width:1000px){.community-heading h1{font-size:32px}.community-intro{gap:20px;padding:22px}.community-intro>span{display:none}.community-toolbar{gap:20px}.community-tabs{gap:3px}.community-tabs button{padding:9px 10px;font-size:11px}.community-search{min-width:160px}.community-search input{width:130px}.community-post-bottom>div{gap:13px}.community-cover{height:190px}}
-@media(max-width:700px){.community-heading{align-items:flex-start;flex-direction:column;gap:22px;margin-bottom:28px}.community-heading h1{font-size:27px;margin:12px 0;line-height:1.6}.community-heading p{font-size:11px}.community-heading>.button{align-self:flex-start;font-size:11px;padding:11px 16px;min-height:42px}.community-intro{flex-direction:column;gap:15px;align-items:flex-start;padding:20px}.community-intro-copy{gap:10px}.community-intro-copy h2{font-size:17px}.community-intro-copy p{font-size:9px}.community-intro>p{font-size:10px;line-height:1.9}.community-toolbar{flex-direction:column;align-items:stretch;gap:17px;margin:25px 0 22px}.community-tabs{gap:2px}.community-tabs button{font-size:10px;padding:9px 10px}.community-search{width:100%;padding:10px 0}.community-search input{width:100%;font-size:11px}.community-feed{grid-template-columns:1fr;gap:23px}.community-cover{height:210px}.community-post-body{padding:23px}.community-post h2{font-size:18px;line-height:1.7}.community-post-body>p{font-size:11px}.community-post-bottom>div{gap:17px}.community-post-bottom button{font-size:9px}.community-ending{flex-direction:column;align-items:flex-start;gap:20px;margin-top:38px;padding-top:29px}.community-ending h2{font-size:19px;line-height:1.7}.community-ending .text-button{font-size:11px}.community-dialog{padding:24px;max-height:90dvh}.community-dialog>header{gap:14px;margin-bottom:22px}.community-dialog>header h2{font-size:22px}.community-dialog label{font-size:11px}.community-dialog input,.community-dialog textarea,.community-dialog select{font-size:12px;padding:11px 12px}.community-dialog form>footer{align-items:flex-start;flex-direction:column;gap:17px}.community-dialog form>footer>span{font-size:9px}.community-dialog form>footer>.button{align-self:flex-end}.community-detail-content{font-size:12px}.community-detail-image{height:200px}.community-comments>form>div small{font-size:8px}.community-comments>form>div{gap:12px}.community-dialog .button{font-size:10px;min-height:40px;padding:11px 14px}.community-detail-meta{font-size:10px}.community-comments>article p{font-size:12px}}
-@media(prefers-reduced-motion:reduce){.community-dialog[open]{animation:none}.community-post,.community-cover img{transition:none}}
-</style>
