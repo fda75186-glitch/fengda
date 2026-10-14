@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { BookOpen, MessageCircle, Plus, Search, Sparkles, Telescope, X } from '@lucide/vue';
+import { MessageCircle, Plus, Search, Sparkles, Telescope, X } from '@lucide/vue';
 import { assetUrl } from '../assets.js';
 import { useCommunityStore } from '../communityClient.js';
 import SaturnLogo from './SaturnLogo.vue';
@@ -204,7 +204,7 @@ onBeforeUnmount(finishClose);
           <section class="ch-panel ch-welcome"><div class="ch-welcome-brand"><SaturnLogo :size="48" /><div><h2>星语社区</h2><p>每一份好奇，都值得被看见。</p></div></div><p class="ch-welcome-description">记录你的夜晚，分享你发现的星空。和天文爱好者一起，让宇宙离我们更近一点。</p><button class="ch-button ch-primary ch-wide" @click="publish"><Plus :size="17" />发布内容</button><button v-if="!store.state.user" class="ch-quiet-button ch-login-invite" @click="requireLogin">登录，加入这片星空</button><p v-else class="ch-signed-in">欢迎回来，{{ store.state.user.name }}</p></section>
           <section class="ch-panel ch-popular"><h2>热门天文社区</h2><div v-for="item in popularChannels" :key="item.id" class="ch-popular-row"><img :src="assetUrl(`/images/${item.image}.jpg`)" alt="" loading="lazy" /><div><strong>{{ item.name }}</strong><span>{{ item.description }}</span></div><button class="ch-button ch-mini" :aria-label="`查看${item.name}社区`" @click="selectChannel(item)">查看</button></div></section>
           <section class="ch-panel ch-topics"><h2>一起聊聊</h2><button v-for="topic in featuredTopics" :key="topic.label" @click="searchTopic(topic.query)"><span>#</span>{{ topic.label }}</button></section>
-          <section class="ch-panel ch-newcomer"><h2>第一次来到星语？</h2><button @click="emit('navigate', 'guide')"><Telescope :size="20" /><span><strong>从抬头看天空开始</strong><small>找到适合自己的观测方式</small></span></button><button @click="emit('navigate', 'quiz')"><BookOpen :size="20" /><span><strong>天文知识挑战</strong><small>在社区里，练习新的知识</small></span></button><button @click="emit('ask', '我是第一次观星，应该从哪里开始？')"><Sparkles :size="20" /><span><strong>问问 AI 星语</strong><small>把好奇交给你的天文伙伴</small></span></button></section>
+          <section class="ch-panel ch-newcomer"><h2>第一次来到星语？</h2><button @click="emit('navigate', 'guide')"><Telescope :size="20" /><span><strong>从抬头看天空开始</strong><small>找到适合自己的观测方式</small></span></button><button @click="emit('ask', '我是第一次观星，应该从哪里开始？')"><Sparkles :size="20" /><span><strong>问问 AI 星语</strong><small>把好奇交给你的天文伙伴</small></span></button></section>
           <p class="ch-sidebar-footnote">星语 STARWHISPER<br />和每一个好奇的人，仰望同一片星空。</p>
         </aside>
       </div>

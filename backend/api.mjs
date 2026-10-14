@@ -1,4 +1,5 @@
 // Shared domain API. Both the local SQLite adapter and Cloudflare D1/R2 call this code.
+import { handleObservatoryApi } from './observatory-api.mjs';
 const encoder = new TextEncoder();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const PASSWORD_ITERATIONS = 100000;
@@ -367,6 +368,8 @@ export async function handleApi(request, context) {
     if (!allowedOrigin(request.headers.get('Origin'), context, request)) fail(403, 'ORIGIN_DENIED', '此来源无权访问社区服务');
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: headersFor(request, context) });
     const path = new URL(request.url).pathname;
+    const mapResponse = await handleObservatoryApi(request, context, headersFor(request, context));
+    if (mapResponse) return mapResponse;
     if (request.method === 'GET' && path === '/api/health') {
       if (!context.DB || !context.BUCKET) fail(503, 'STORAGE_UNAVAILABLE', '社区存储尚未配置');
       await context.DB.prepare('SELECT COUNT(*) AS n FROM accounts').first();

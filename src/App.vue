@@ -1,6 +1,6 @@
 <script setup>
 import { assetUrl } from './assets.js';
-import { computed, ref, watch, defineAsyncComponent, nextTick, onMounted, onUnmounted } from 'vue';
+import { computed, ref, watch, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
 import { Orbit, Search, ArrowUpRight, UserRound, Sparkles, Menu, X, Bookmark, ArrowRight, ExternalLink } from '@lucide/vue';
 import SaturnLogo from './components/SaturnLogo.vue';
 import FloatingAssistant from './components/FloatingAssistant.vue';
@@ -14,12 +14,15 @@ import AssistantPage from './components/AssistantPage.vue';
 import AtlasPage from './components/AtlasPage.vue';
 import QuizPage from './components/QuizPage.vue';
 import GuidePage from './components/GuidePage.vue';
+import AnchoredDialog from './components/AnchoredDialog.vue';
 import CardStudio from './components/CardStudio.vue';
 import { useScrollReveal } from './useScrollReveal.js';
 const ARUniversePage=defineAsyncComponent(()=>import('./components/ARUniversePage.vue'));
 const CommunityPage=defineAsyncComponent(()=>import('./components/CommunityPage.vue'));
 const PublishPage=defineAsyncComponent(()=>import('./components/PublishPage.vue'));
-import { exploreArticles as articles } from './exploreBodies.js';
+import { exploreArticles } from './exploreBodies.js';
+import { additionalGuideKnowledge } from './guideKnowledge.js';
+const articles = [...exploreArticles, ...additionalGuideKnowledge];
 const ExploreBody3D = defineAsyncComponent(() => import('./components/ExploreBody3D.vue'));
 const detailIs3D = computed(() => selectedArticle.value?.explore3d || ['mercury','venus','mars','uranus','neptune'].includes(selectedArticle.value?.id));
 const routes = [{id:'home',label:'首页'},{id:'explore',label:'探索宇宙'},{id:'atlas',label:'星空图谱'},{id:'assistant',label:'AI 星语'},{id:'guide',label:'观测指南'},{id:'ar',label:'AR 宇宙云图'},{id:'community',label:'社区'}];
@@ -33,7 +36,7 @@ const globalSearchItems=computed(()=>[...articles.map(a=>({id:a.id,kind:'article
 function openLogin(){loginOpen.value=true}
 function contentPublished(post){navigate('community');notify(post.visibility==='private'?'私密内容已保存，仅自己可见。':'内容已发布到社区。')}
 async function logoutAccount(){try{await community.logout();notify('已退出登录')}catch(error){notify(error.message)}}
-function searchSelect(item){if(item.kind==='article'){const a=articles.find(a=>a.id===item.id);if(a)openArticle(a)}else{targetCommunityPost.value=item.id;navigate('community')}}
+function searchSelect(item,source){if(item.kind==='article'){const a=articles.find(a=>a.id===item.id);if(a)openArticle(a,source)}else{targetCommunityPost.value=item.id;navigate('community')}}
 onMounted(()=>community.initialize());
 useScrollReveal(route);
 let toastTimeout;
@@ -46,8 +49,10 @@ watch(favorites,v=>persist('xingyu-favorites',v),{deep:true});watch(savedCards,v
 function navigate(page){location.hash=page;route.value=page;menu.value=false;window.scrollTo(0,0)}
 window.addEventListener('hashchange',()=>{route.value=getRoute();menu.value=false;window.scrollTo(0,0)});
 function toggleFavorite(a){favorites.value=favorites.value.includes(a.id)?favorites.value.filter(id=>id!==a.id):[...favorites.value,a.id];notify(favorites.value.includes(a.id)?'已收藏到「我的星空」':'已取消收藏')}
-async function openArticle(a){selectedArticle.value=a;if(!learned.value.includes(a.id))learned.value.push(a.id);await nextTick();dialog.value.showModal()}
-function closeArticle(){dialog.value.close();selectedArticle.value=null}
+const articleSource = ref(null);
+function openArticle(a,source=null){if(!a)return;articleSource.value=source?.getBoundingClientRect?source:null;selectedArticle.value=a;if(!learned.value.includes(a.id))learned.value.push(a.id)}
+function closeArticle(){dialog.value?.requestClose()}
+function finishArticleClose(){selectedArticle.value=null;articleSource.value=null}
 function ask(text){question.value=text;navigate('assistant')}
 function saveCard(card){if(savedCards.value.some(c=>c.cardId===card.cardId)){notify('这张知识卡已经收藏过了');return}savedCards.value.push(card);notify('知识卡已保存到「我的星空」')}
 const featureIntros={
@@ -57,22 +62,23 @@ const featureIntros={
  guide:{title:'下一站，去看星星。',eyebrow:'05 · 观测指南',description:'不必等到远行，第一次探索就从抬头开始。',image:'/images/telescope-night.jpg',number:'05'},
  notebook:{title:'你的好奇，自成一个宇宙。',eyebrow:'06 · 我的星空',description:'把探索过的故事，收藏成自己的星图。',image:'/images/starfield-night.jpg',number:'06'},
 };
-function tapFeedback(event){const element=event.target.closest('button,a');if(!element||element.disabled)return;element.classList.remove('tap-feedback');void element.offsetWidth;element.classList.add('tap-feedback');setTimeout(()=>element.classList.remove('tap-feedback'),450)}
+function tapFeedback(event){const element=event.target.closest('button,a');if(!element||element.disabled)return;if(element.matches('.maplibregl-marker,.observatory-marker,.fallback-place')){element.classList.remove('tap-feedback');return}element.classList.remove('tap-feedback');void element.offsetWidth;element.classList.add('tap-feedback');setTimeout(()=>element.classList.remove('tap-feedback'),450)}
 onMounted(()=>document.addEventListener('click',tapFeedback,true));
 onUnmounted(()=>document.removeEventListener('click',tapFeedback,true));
 const credits={saturn:'NASA/JPL-Caltech/Space Science Institute · PIA17474',jupiter:'NASA/JPL/University of Arizona · PIA02873',earth:'NASA/JPL-Caltech · PIA18033',andromeda:'NASA/JPL-Caltech · PIA04921',sun:'NASA/SDO · GSFC_20171208_Archive_e002035',moon:'NASA/JPL/USGS · PIA00405',blackhole:'NASA/JPL-Caltech · PIA16697 · 艺术概念图'};
+Object.assign(credits, { 'telescope-night': 'Pexels · 观星主题配图 5753506', 'starfield-night': 'Francesco Ungaro / Pexels · 星空主题配图 998641' });
 </script>
 <template>
   <a class="skip-link" href="#main-content">跳到正文</a>
   <SiteHeader :routes="routes" :route="route" :user="community.state.user" :search-items="globalSearchItems" @navigate="navigate" @publish="navigate('publish')" @login="openLogin" @logout="logoutAccount" @select-search="searchSelect"/>
   <AccountDialog v-model:open="loginOpen" @success="notify('登录成功，欢迎来到星语')"/>
-  <main id="main-content" :class="{'assistant-route':route==='assistant','community-route':['community','publish'].includes(route)}"><Transition name="page" mode="out-in"><div :key="route" class="route-view"><FeatureIntro v-if="featureIntros[route]" v-bind="featureIntros[route]" target="feature-content"/><div id="feature-content">
+  <main id="main-content" :class="{'assistant-route':route==='assistant','community-route':['community','publish'].includes(route),'ar-route':route==='ar'}"><Transition name="page" mode="out-in"><div :key="route" class="route-view"><FeatureIntro v-if="featureIntros[route]" v-bind="featureIntros[route]" target="feature-content"/><div id="feature-content">
     <HomePage v-if="route==='home'" @navigate="navigate" @open="openArticle" @ask="ask"/>
     <ExplorePage :suspended="Boolean(selectedArticle)" v-else-if="route==='explore'" v-model:search="search" :favorites="favorites" @open="openArticle" @favorite="toggleFavorite" @navigate="navigate"/>
     <AssistantPage v-else-if="route==='assistant'" :initial-question="question" @open="openArticle" @navigate="navigate" @consumed="question=''"/>
     <AtlasPage v-else-if="route==='atlas'" @ask="ask" @open="openArticle"/>
     <QuizPage v-else-if="route==='quiz'" @navigate="navigate"/>
-    <GuidePage v-else-if="route==='guide'" @open="openArticle"/>
+    <GuidePage v-else-if="route==='guide'" @open="openArticle" @navigate="navigate"/>
     <CardStudio v-else-if="route==='studio'" @save="saveCard"/>
     <ARUniversePage v-else-if="route==='ar'" @ask="ask" @navigate="navigate"/>
     <CommunityPage v-else-if="route==='community'" :initial-post="targetCommunityPost" @viewed="targetCommunityPost=null" @ask="ask" @navigate="navigate" @login="openLogin" @notify="notify"/>
@@ -80,10 +86,11 @@ const credits={saturn:'NASA/JPL-Caltech/Space Science Institute · PIA17474',jup
     <section v-else class="page-shell notebook"><div class="eyebrow">YOUR LITTLE UNIVERSE</div><h1>我的探索记录</h1><p class="page-description">把每一次好奇，收藏成自己的宇宙。</p><div class="notebook-stats"><div><strong>{{learned.length}}</strong><span>已探索的知识</span></div><div><strong>{{favorites.length}}</strong><span>收藏的文章</span></div><div><strong>{{savedCards.length}}</strong><span>专属知识卡</span></div><div class="local-note"><SaturnLogo :size="44"/><span>访客探索者<br/><small>记录保存在当前浏览器</small></span></div></div><h2 class="section-heading">我的收藏 <Bookmark :size="20"/></h2><div v-if="!savedArticles.length" class="empty-state"><Bookmark :size="35"/><h3>你的星空，等着第一颗星</h3><p>收藏感兴趣的科普文章，下次回来接着探索。</p><button class="button primary" @click="navigate('explore')">去探索宇宙 <ArrowRight :size="17"/></button></div><div v-else class="article-grid"><article v-for="a in savedArticles" :key="a.id" class="article-card"><div v-if="['mercury','venus','mars','uranus','neptune'].includes(a.id)" class="saved-planet-model"><ExploreBody3D :body="a.image" compact @focus="openArticle(a)"/></div><button v-else class="article-cover" @click="openArticle(a)"><img :src="assetUrl(`/images/${a.image}.jpg`)" :alt="a.title"/></button><div class="article-info"><span class="category-label">{{a.category}}</span><h3><button @click="openArticle(a)">{{a.title}}</button></h3><p>{{a.short}}</p><button class="text-button" @click="toggleFavorite(a)">取消收藏</button></div></article></div><h2 v-if="savedCards.length" class="section-heading">我的知识卡</h2><div class="saved-card-grid"><article v-for="card in savedCards" class="saved-card"><SaturnLogo :size="40"/><h3>{{card.title}}</h3><p>{{card.intro}}</p><ul><li v-for="point in card.points">{{point}}</li></ul><a :href="card.source" target="_blank" rel="noopener noreferrer">查看知识来源 <ExternalLink :size="13"/></a></article></div></section>
   </div></div></Transition></main>
   <footer v-if="!['assistant','community','publish'].includes(route)" class="site-footer"><div class="footer-inner"><a class="footer-brand" href="#home"><SaturnLogo :size="39"/> 星语<span>让每个人，都能听懂宇宙。</span></a><div><a href="#explore" @click.prevent="navigate('explore')">探索宇宙</a><a href="#studio" @click.prevent="navigate('studio')">知识卡工作室</a><a href="https://science.nasa.gov/" target="_blank" rel="noopener noreferrer">NASA 资料来源 <ArrowUpRight :size="13"/></a></div></div><div class="footer-bottom"><span>© 2026 星语 · 传智杯参赛原型</span><span>NASA 科普资料 · 图片署名见详情 · AI 为离线演示</span></div></footer>
-  <FloatingAssistant v-if="!['assistant','publish'].includes(route)" @ask="ask('')"/><div v-if="toast" class="toast" role="status">{{toast}}</div>
-  <dialog ref="dialog" class="article-dialog" @cancel="selectedArticle=null" @click="($event.target===dialog)&&closeArticle()"><template v-if="selectedArticle"><button class="dialog-close icon-button" aria-label="关闭文章" @click="closeArticle"><X :size="23"/></button><div v-if="detailIs3D" class="detail-model"><ExploreBody3D :body="selectedArticle.image"/></div><img v-else class="detail-image" :src="assetUrl(`/images/${selectedArticle.image}.jpg`)" :alt="selectedArticle.title"/><div class="detail-content"><div class="category-label">{{selectedArticle.category}} <span>· {{selectedArticle.minutes}} 分钟阅读</span></div><h2>{{selectedArticle.title}}</h2><p class="detail-intro">{{selectedArticle.short}}</p><p v-for="paragraph in selectedArticle.body.split('\n\n')" class="detail-paragraph">{{paragraph}}</p><aside class="fact-box"><Sparkles :size="19"/><div><strong>多一点宇宙冷知识</strong><p>{{selectedArticle.fact}}</p></div></aside><a class="source-link" :href="selectedArticle.source" target="_blank" rel="noopener noreferrer">知识来源：{{selectedArticle.sourceName}} <ExternalLink :size="15"/></a><p v-if="detailIs3D && selectedArticle.image==='andromeda'" class="image-credit">星系：按参考风格生成的美术纹理与 3D 体积模型，用于科普示意，非天文实拍照片。</p><p v-else-if="detailIs3D" class="image-credit">交互式 3D 科普模型，尺寸、光照、自转速度为示意。纹理：<a href="https://www.solarsystemscope.com/textures/" target="_blank" rel="noopener noreferrer">Solar System Scope / INOVE</a>，<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>；星系与黑洞为自建概念几何。</p><p v-else class="image-credit">图片：{{credits[selectedArticle.image]}}。部分文章使用栏目主题配图，具体天体请以说明为准。</p><div class="detail-actions"><button class="button secondary" @click="toggleFavorite(selectedArticle)"><Bookmark :size="17"/>{{favorites.includes(selectedArticle.id)?'已收藏':'收藏文章'}}</button><button class="button primary" @click="ask(`关于${selectedArticle.keywords[0]}，我还想知道更多`);closeArticle()">继续问星语 <ArrowUpRight :size="17"/></button></div></div></template></dialog>
+  <FloatingAssistant v-if="!['assistant','publish','ar'].includes(route)" @ask="ask('')"/><div v-if="toast" class="toast" role="status">{{toast}}</div>
+  <AnchoredDialog ref="dialog" :open="Boolean(selectedArticle)" :source="articleSource" panel-class="article-dialog" labelledby="article-detail-title" @close="finishArticleClose"><template v-if="selectedArticle"><button class="dialog-close icon-button" aria-label="关闭文章" @click="closeArticle"><X :size="23"/></button><div v-if="detailIs3D" class="detail-model"><ExploreBody3D :body="selectedArticle.image"/></div><img v-else class="detail-image" :src="assetUrl(`/images/${selectedArticle.image}.jpg`)" :alt="selectedArticle.title"/><div class="detail-content"><div class="category-label">{{selectedArticle.category}} <span>· {{selectedArticle.minutes}} 分钟阅读</span></div><h2 id="article-detail-title">{{selectedArticle.title}}</h2><p class="detail-intro">{{selectedArticle.short}}</p><p v-for="paragraph in selectedArticle.body.split('\n\n')" class="detail-paragraph">{{paragraph}}</p><aside class="fact-box"><Sparkles :size="19"/><div><strong>多一点宇宙冷知识</strong><p>{{selectedArticle.fact}}</p></div></aside><a class="source-link" :href="selectedArticle.source" target="_blank" rel="noopener noreferrer">知识来源：{{selectedArticle.sourceName}} <ExternalLink :size="15"/></a><p v-if="detailIs3D && selectedArticle.image==='andromeda'" class="image-credit">星系：按参考风格生成的美术纹理与 3D 体积模型，用于科普示意，非天文实拍照片。</p><p v-else-if="detailIs3D" class="image-credit">交互式 3D 科普模型，尺寸、光照、自转速度为示意。纹理：<a href="https://www.solarsystemscope.com/textures/" target="_blank" rel="noopener noreferrer">Solar System Scope / INOVE</a>，<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>；星系与黑洞为自建概念几何。</p><p v-else class="image-credit">图片：{{credits[selectedArticle.image]}}。部分文章使用栏目主题配图，具体天体请以说明为准。</p><div class="detail-actions"><button class="button secondary" @click="toggleFavorite(selectedArticle)"><Bookmark :size="17"/>{{favorites.includes(selectedArticle.id)?'已收藏':'收藏文章'}}</button><button class="button primary" @click="ask(`关于${selectedArticle.keywords[0]}，我还想知道更多`);closeArticle()">继续问星语 <ArrowUpRight :size="17"/></button></div></div></template></AnchoredDialog>
 </template>
 
 <style>
+.ar-route .route-view{min-height:0}.ar-route .page-enter-active,.ar-route .page-leave-active{transition:opacity .25s}.ar-route .page-enter-from,.ar-route .page-leave-to{transform:none;filter:none}.ar-route+.site-footer{display:none}
 .detail-model{height:410px;background:#f3f6f9;padding:24px 20px 10px}.saved-planet-model{height:260px}.article-dialog:has(.detail-model) .dialog-close{z-index:5;background:#ffffffeb;color:#304c64}.image-credit a{text-decoration:underline;text-underline-offset:3px}@media(max-width:600px){.detail-model{height:330px;padding:34px 10px 8px}}
 </style>

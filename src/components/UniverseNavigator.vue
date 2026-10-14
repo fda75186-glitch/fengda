@@ -1,0 +1,76 @@
+<script setup>
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { Search, X, Plus, Minus, LocateFixed, ArrowUpRight, ArrowLeft, Rocket } from '@lucide/vue';
+import { exoplanetStop } from '../universe/catalog.js';
+import { explorationFor } from '../universe/exploration.js';
+import { cosmicMapNodes, regionMapNodes, mapDestination, zoomMap } from '../universe/universeMap.js';
+import { arrangeFlightLabels } from '../universe/flightPresentation.js';
+const props=defineProps({stops:Array,current:Object,catalog:Object,status:String});
+const emit=defineEmits(['jump','close','reload']);
+const dialog=ref(null),canvas=ref(null),scope=ref(null),selected=ref(null),query=ref(''),view=ref({zoom:1,x:0,y:0});
+const scopeHistory=ref([]);
+const mapSize=ref({width:1000,height:600});
+let dragging=null,moved=false,previousFocus,resizeObserver;
+const aliases={'Proxima Cen':'比邻星','KOI-351':'Kepler-90','55 Cnc':'巨蟹座55'};
+const results=computed(()=>{const term=query.value.trim().toLowerCase();return (props.catalog?.systems||[]).filter(item=>!term||`${item.name} ${aliases[item.name]||''}`.toLowerCase().includes(term)||item.planets.some(planet=>planet.name.toLowerCase().includes(term)));});
+const shown=computed(()=>results.value.slice(0,40));
+const nodes=computed(()=>(scope.value?regionMapNodes(scope.value):cosmicMapNodes(props.stops)).map(node=>({...node,x:node.x/1000*mapSize.value.width,y:node.y/600*mapSize.value.height})));
+const labels=computed(()=>arrangeFlightLabels(nodes.value.map(node=>({id:node.id,name:node.name,x:node.x*view.value.zoom+view.value.x,y:node.y*view.value.zoom+view.value.y,visible:true,selected:selected.value?.id===node.id,priority:/moon|dwarf/.test(node.kind)?1:3})),mapSize.value.width,mapSize.value.height));
+const title=computed(()=>scope.value?.name||'宇宙全景');
+const stars=Array.from({length:230},(_,i)=>({x:(i*317.173)%1000,y:(i*173.731)%600,r:i%13===0?1.5:.65}));
+function reset(){view.value={zoom:1,x:0,y:0};}
+function overview(){scopeHistory.value=[];scope.value=null;selected.value=null;reset();}
+function region(stop,remember=false){if(remember&&scope.value)scopeHistory.value.push(scope.value);else if(!remember)scopeHistory.value=[];scope.value=stop;selected.value=null;query.value='';reset();}
+function pick(node){if(!moved)selected.value=node;}
+function system(item){region(exoplanetStop(item));}
+function point(event){const r=canvas.value.getBoundingClientRect();return {x:event.clientX-r.left,y:event.clientY-r.top};}
+function zoom(factor){view.value=zoomMap(view.value,factor,{x:mapSize.value.width/2,y:mapSize.value.height/2});}
+function wheel(event){view.value=zoomMap(view.value,event.deltaY<0?1.15:1/1.15,point(event));}
+function down(event){if(event.button!==0)return;moved=false;dragging={...point(event),x0:view.value.x,y0:view.value.y};canvas.value.setPointerCapture(event.pointerId);}
+function move(event){if(!dragging)return;const p=point(event),dx=p.x-dragging.x,dy=p.y-dragging.y;if(Math.abs(dx)+Math.abs(dy)>5)moved=true;view.value={...view.value,x:Math.max(-5000,Math.min(5000,dragging.x0+dx)),y:Math.max(-3000,Math.min(3000,dragging.y0+dy))};}
+function up(){dragging=null;}
+function jump(){const destination=mapDestination(selected.value);if(destination)emit('jump',destination);}
+function inside(){const node=selected.value;if(!node)return;if(!scope.value)region(node.stop);else{const destination=explorationFor(node.body,props.catalog,scope.value);if(destination)region(destination,true);}}
+function backRegion(){const previous=scopeHistory.value.pop();if(previous){scope.value=previous;selected.value=null;reset();}else overview();}
+const canEnter=computed(()=>selected.value&&(!scope.value||explorationFor(selected.value.body,props.catalog,scope.value)));
+function key(event){if(event.key==='Escape'){event.preventDefault();emit('close');}if(event.key==='Tab'){const all=[...dialog.value.querySelectorAll('button,input,[tabindex="0"]')].filter(el=>!el.disabled);const first=all[0],last=all.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}}
+onMounted(()=>{previousFocus=document.activeElement;dialog.value.querySelector('button')?.focus();resizeObserver=new ResizeObserver(()=>{mapSize.value={width:Math.max(1,canvas.value.clientWidth),height:Math.max(1,canvas.value.clientHeight)};reset();});resizeObserver.observe(canvas.value);});
+onBeforeUnmount(()=>{resizeObserver?.disconnect();previousFocus?.focus?.();});
+</script>
+
+<template>
+  <section ref="dialog" class="universe-map" role="dialog" aria-modal="true" aria-label="宇宙地图" @keydown.stop="key">
+    <header class="map-header"><div><small>STARWHISPER / UNIVERSE MAP</small><h2>宇宙地图</h2></div><p>你在 · {{current.name}}</p><button class="flight-icon" aria-label="关闭宇宙地图" @click="emit('close')"><X :size="22"/></button></header>
+    <div class="map-workspace">
+      <aside class="map-directory"><button class="map-home" @click="overview"><ArrowLeft :size="15"/>宇宙全景</button><nav aria-label="宇宙尺度"><button v-for="(stop,index) in stops.slice().reverse()" :key="stop.id" :class="{active:scope?.id===stop.id}" @click="region(stop)"><span>{{String(7-index).padStart(2,'0')}}</span>{{stop.name}}<small v-if="current.id===stop.id">所在</small></button></nav>
+        <label class="map-search"><Search :size="16"/><input v-model="query" type="search" aria-label="搜索恒星或行星" placeholder="搜索恒星、行星系统…"/></label>
+        <p class="map-count">{{catalog?catalog.systemCount.toLocaleString()+' 个已收录系统':'系外行星目录'}}</p>
+        <p v-if="status==='loading'" role="status">正在读取目录…</p><div v-else-if="status==='error'" role="status">目录未能读取<button class="flight-button" @click="emit('reload')">重试</button></div>
+        <div v-else class="map-search-results"><button v-for="item in shown" :key="item.id" @click="system(item)"><strong>{{item.name}}</strong><small>{{item.planets.length}} 颗行星</small></button><p v-if="!results.length">没有匹配的系统</p><p v-else-if="results.length>40">显示前 40 项，输入名称查找更多</p></div>
+      </aside>
+      <div class="map-main"><div class="map-breadcrumb"><button @click="overview">宇宙全景</button><button v-if="scopeHistory.length" @click="backRegion"> / 返回上层</button><span v-if="scope"> / {{scope.name}}</span><small>拖动平移 · 滚轮缩放 · 点选目的地</small></div>
+        <svg ref="canvas" class="map-canvas" :viewBox="`0 0 ${mapSize.width} ${mapSize.height}`" preserveAspectRatio="none" aria-label="可缩放宇宙地图" @wheel.prevent="wheel" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up">
+          <defs><radialGradient id="atlas-glow"><stop offset="0" stop-color="#c1e2eb" stop-opacity=".5"/><stop offset="1" stop-color="#477b9b" stop-opacity="0"/></radialGradient></defs>
+          <rect :width="mapSize.width" :height="mapSize.height" fill="#06111e"/><g fill="#c0d3df" opacity=".5"><circle v-for="(star,i) in stars" :key="i" :cx="star.x/1000*mapSize.width" :cy="star.y/600*mapSize.height" :r="star.r"/></g>
+          <g :transform="`translate(${view.x} ${view.y}) scale(${view.zoom})`">
+            <g v-if="!scope" class="map-scale-lines"><path v-for="(node,i) in nodes.slice(1)" :key="node.id" :d="`M ${nodes[i].x} ${nodes[i].y} Q ${node.x} ${nodes[i].y} ${node.x} ${node.y}`"/><ellipse :cx="mapSize.width*.535" :cy="mapSize.height*.492" :rx="mapSize.width*.355" :ry="mapSize.height*.375"/><ellipse :cx="mapSize.width*.535" :cy="mapSize.height*.492" :rx="mapSize.width*.285" :ry="mapSize.height*.283"/></g>
+            <g v-else class="map-orbit-lines"><ellipse v-for="node in nodes.filter(n=>n.kind==='planet')" :key="node.id" :cx="mapSize.width*.5" :cy="mapSize.height*295/600" :rx="Math.max(25,Math.hypot(node.x-mapSize.width*.5,(node.y-mapSize.height*295/600)*1.5))" :ry="Math.max(16,Math.hypot(node.x-mapSize.width*.5,(node.y-mapSize.height*295/600)*1.5)*.6)"/></g>
+            <g v-for="node in nodes" :key="node.id" class="map-node" :class="{selected:selected?.id===node.id}" :transform="`translate(${node.x} ${node.y})`" role="button" tabindex="0" :aria-label="'选择'+node.name" @pointerdown.stop="moved=false" @click.stop="pick(node)" @keydown.enter.prevent="selected=node" @keydown.space.prevent="selected=node">
+              <circle :r="node.radius*3.2" fill="url(#atlas-glow)" pointer-events="none"/><circle :r="Math.max(15,node.radius+6)" class="node-hit"/><ellipse v-if="/galaxy|group/.test(node.kind)" :rx="node.radius*1.8" :ry="node.radius*.7" transform="rotate(-28)" fill="none" stroke="#aac7d7" stroke-width="2"/><circle :r="node.radius" :fill="node.body?.color||'#87bdd1'"/><circle v-if="selected?.id===node.id" :r="node.radius+9" class="selected-ring"/>
+            </g>
+          </g>
+          <g class="map-labels"><g v-for="label in labels.filter(item=>item.visible)" :key="label.id" @pointerdown.stop="moved=false" @click.stop="selected=nodes.find(node=>node.id===label.id)"><line :x1="label.anchorX" :y1="label.anchorY" :x2="label.x" :y2="label.y"/><rect :x="label.x-label.width/2" :y="label.y-15" :width="label.width" height="30" rx="4"/><text :x="label.x" :y="label.y+4" text-anchor="middle">{{label.name}}</text></g></g>
+        </svg>
+        <div class="map-zoom"><button aria-label="放大地图" @click="zoom(1.3)"><Plus :size="18"/></button><span>{{Math.round(view.zoom*100)}}%</span><button aria-label="缩小地图" @click="zoom(1/1.3)"><Minus :size="18"/></button><button aria-label="重置地图" @click="reset"><LocateFixed :size="18"/></button></div>
+        <div class="map-selection" aria-live="polite"><template v-if="selected"><div><small>目的地</small><h3>{{selected.name}}</h3><p>{{selected.body?.description||selected.stop.subtitle}}</p></div><button v-if="canEnter" class="flight-button" @click="inside">展开区域<ArrowUpRight :size="16"/></button><button class="flight-button warm" @click="jump"><Rocket :size="16"/>快速穿越</button></template><template v-else><div><h3>{{title}}</h3><p>选择地图上的天体，可展开区域或快速前往。</p></div><button v-if="scope" class="flight-button warm" @click="emit('jump',{stop:scope,bodyId:null})">穿越到这里</button></template></div>
+      </div>
+    </div>
+    <footer>宇宙尺度与位置为科普示意 · 可逐层探索已收录区域 · 远距离航行使用科幻虫洞效果</footer>
+  </section>
+</template>
+
+<style scoped>
+.universe-map{position:absolute!important;inset:16px!important;z-index:30!important;display:flex;flex-direction:column;max-height:none!important;width:auto!important;background:#07121f;color:#e8eff3;border:1px solid #afcbd345;border-radius:8px;box-shadow:0 20px 80px #0008;overflow:hidden}.map-header{display:flex;align-items:center;gap:24px;padding:16px 24px;border-bottom:1px solid #b4cfdf26}.map-header>div{flex:1}.map-header small{font:9px Arial;letter-spacing:2px;color:#9aafc0}.map-header h2{font-size:23px;font-weight:500;color:inherit;margin:5px 0 0}.map-header p{font-size:12px;color:#d4bb96}.map-workspace{display:flex;flex:1;min-height:0}.map-directory{width:240px;flex:none;padding:16px;overflow:auto;border-right:1px solid #b4cfdf26;font-size:12px;scrollbar-width:thin}.map-directory button{color:#c7d7e2;text-align:left}.map-home{display:flex;align-items:center;gap:8px;margin-bottom:16px}.map-directory nav{display:grid;gap:4px}.map-directory nav button{display:flex;align-items:center;gap:10px;padding:10px 8px;border-radius:4px;font-size:12px}.map-directory nav button span{font:10px Arial;color:#8ca8be}.map-directory nav button small{margin-left:auto;color:#d9bf91}.map-directory button:hover,.map-directory .active{background:#b6d4ea16}.map-search{display:flex;align-items:center;gap:8px;border:1px solid #b4cfdf40;padding:10px 8px;margin-top:20px;border-radius:4px}.map-search input{min-width:0;width:100%;background:none;border:0;color:#e8eff3;font-size:11px}.map-count{font-size:10px;color:#9aafc0;margin:12px 0}.map-search-results button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:10px 5px;font:11px Arial}.map-search-results strong{font-weight:500}.map-search-results small{font-size:10px;color:#9aafc0;white-space:nowrap}.map-search-results p{font-size:10px;color:#9aafc0}.map-main{position:relative;flex:1;min-width:0;display:flex;flex-direction:column}.map-breadcrumb{padding:12px 20px;font-size:12px;border-bottom:1px solid #b4cfdf18}.map-breadcrumb button{color:#d4bb96}.map-breadcrumb small{float:right;font-size:10px;color:#9aafc0}.map-canvas{flex:1;width:100%;min-height:120px;touch-action:none;cursor:grab}.map-canvas:active{cursor:grabbing}.map-scale-lines,.map-orbit-lines{fill:none;stroke:#7092ab;stroke-opacity:.3;stroke-width:1;stroke-dasharray:4 8}.map-scale-lines path{stroke:#aac9df;stroke-opacity:.55;stroke-width:1.5}.map-node{cursor:pointer;outline:none}.node-hit{fill:transparent;stroke:transparent}.map-node:focus .node-hit,.map-node:hover .node-hit{stroke:#fff;stroke-width:2}.selected-ring{fill:none;stroke:#e8c58b;stroke-width:1.5}.map-labels g{cursor:pointer}.map-labels rect{fill:#0c2035;stroke:#8db6cd44}.map-labels text{fill:#e1ebf2;font:11px sans-serif;pointer-events:none}.map-labels line{stroke:#b6cee0;stroke-opacity:.5;pointer-events:none}.map-zoom{position:absolute;right:16px;top:56px;display:flex;align-items:center;gap:2px;background:#102337;border:1px solid #92b1c433;border-radius:4px}.map-zoom button{display:grid;place-items:center;width:36px;height:36px;color:#c5dbea}.map-zoom span{font:10px Arial;color:#acc6d9;min-width:34px;text-align:center}.map-selection{display:flex;align-items:center;gap:12px;padding:16px 20px;border-top:1px solid #b4cfdf26;background:#0c1a2a;min-height:104px}.map-selection>div{flex:1;min-width:0}.map-selection small{font-size:10px;color:#bba680}.map-selection h3{font-size:18px;margin:4px 0 6px;color:#ecf3f7;font-weight:500}.map-selection p{font-size:11px;line-height:1.8;margin:0;color:#a6bccb;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.map-selection button{flex:none}footer{font-size:10px;color:#98afc0;padding:10px 20px;border-top:1px solid #b4cfdf26}button:focus-visible,input:focus-visible{outline:2px solid #d4bb96;outline-offset:3px}
+@media(max-width:800px){.universe-map{inset:6px!important}.map-header{padding:12px;gap:12px}.map-header h2{font-size:18px}.map-header p{font-size:10px}.map-directory{width:170px;padding:10px}.map-breadcrumb{padding:10px}.map-breadcrumb small{display:none}.map-selection{flex-wrap:wrap;padding:12px;gap:8px}.map-selection>div{flex-basis:100%}.map-selection h3{font-size:16px}.map-selection p{font-size:10px}.map-selection button{font-size:10px}.map-zoom{top:44px;right:8px}.map-header small{font-size:7px}.map-node circle{vector-effect:non-scaling-stroke}}
+@media(max-width:520px){.map-workspace{flex-direction:column}.map-directory{width:auto;max-height:142px;border-right:0;border-bottom:1px solid #b4cfdf26;display:flex;flex-wrap:wrap;gap:8px;padding:8px}.map-home{margin:0;font-size:11px}.map-directory nav{display:flex;flex-wrap:wrap;gap:0}.map-directory nav button{font-size:10px;padding:6px}.map-directory nav button span,.map-directory nav button small{display:none}.map-search{margin:0;width:100%;padding:6px}.map-count{display:none}.map-search-results{width:100%}.map-main{min-height:0}.map-selection{min-height:80px}.map-selection p{display:none}footer{font-size:8px;padding:8px}.map-header p{display:none}}
+</style>

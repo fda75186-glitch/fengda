@@ -7,12 +7,36 @@ import { createModel, disposeModel } from '../explore3d/models.js';
 import { bodyNames, isConcept } from '../exploreBodies.js';
 
 const props = defineProps({ body: { type: String, default: 'earth' }, compact: Boolean, suspended: Boolean });
-const emit = defineEmits(['focus']);
+const emit = defineEmits(['focus', 'open']);
 const holder = ref(null), viewport = ref(null), state = ref('waiting'), spinning = ref(true);
 const name = computed(() => bodyNames[props.body] || props.body);
 const concept = computed(() => isConcept(props.body));
 let renderer, camera, scene, controls, model, observer, resizeObserver, animation, visible = false;
 let generation = 0, baseline = 4, initialSpin = 0, last = 0, motion;
+let coverGesture = null, coverClickEligible = false;
+
+function beginCoverGesture(event) {
+  if (!props.compact || event.button !== 0) return;
+  coverClickEligible = false;
+  if (coverGesture && coverGesture.id !== event.pointerId) { coverGesture.moved = true; return; }
+  coverGesture = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+}
+function moveCoverGesture(event) {
+  if (!coverGesture || coverGesture.id !== event.pointerId) return;
+  if (Math.hypot(event.clientX - coverGesture.x, event.clientY - coverGesture.y) > 6) coverGesture.moved = true;
+}
+function finishCoverGesture(event) {
+  moveCoverGesture(event);
+  coverClickEligible = Boolean(coverGesture && coverGesture.id === event.pointerId && !coverGesture.moved);
+  coverGesture = null;
+}
+function cancelCoverGesture() { coverGesture = null; coverClickEligible = false; }
+function openCover(event) {
+  const eligible = coverClickEligible;
+  coverClickEligible = false;
+  if (!props.compact || !eligible || event.ctrlKey || event.altKey || event.metaKey) return;
+  emit('open', event);
+}
 
 function release() {
   generation++; cancelAnimationFrame(animation); last = 0;
@@ -45,7 +69,9 @@ function zoom(factor) {
   controls.update();
 }
 function keyControl(event) {
-  if (event.target !== viewport.value || !camera) return;
+  if (event.target !== viewport.value) return;
+  if (event.key === 'Enter' && props.compact) { event.preventDefault(); emit('open', event); return; }
+  if (!camera) return;
   if (['+', '=', '-', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(event.key)) event.preventDefault();
   if (event.key === '+' || event.key === '=') zoom(.85);
   else if (event.key === '-') zoom(1.18);
@@ -82,6 +108,10 @@ async function mountScene() {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     const canvas = renderer.domElement;
     canvas.setAttribute('aria-hidden', 'true');
+    canvas.addEventListener('anchored-snapshot', () => {
+      // WebGL buffers are transient: render just before the shared card animation copies this frame.
+      if (renderer?.domElement === canvas && scene && camera && model) renderer.render(scene, camera);
+    });
     canvas.addEventListener('webglcontextlost', event => {
       if (!canvas.isConnected) return;
       event.preventDefault(); state.value = 'error'; release();
@@ -122,10 +152,12 @@ onBeforeUnmount(() => { observer?.disconnect(); resizeObserver?.disconnect(); re
 </script>
 
 <template>
-  <div ref="holder" class="explore-model" :class="{compact, 'concept-model': concept}" :aria-label="name+'三维展示'">
+  <div ref="holder" class="explore-model" :class="{compact, 'concept-model': concept}" :aria-label="name+'三维展示'" :data-anchored-model="body" :data-anchored-ready="state==='ready'">
     <div ref="viewport" class="explore-model-viewport" tabindex="0" role="group"
-      :aria-label="name+'三维模型。拖动旋转，Ctrl 加滚轮或双指缩放；键盘方向键旋转，加减键缩放，空格暂停，R 重置。'"
-      :aria-busy="state==='loading'" @keydown="keyControl"></div>
+      :aria-label="name+'三维模型。'+(compact?'点击或按 Enter 打开知识卡。':'')+'拖动旋转，Ctrl 加滚轮或双指缩放；键盘方向键旋转，加减键缩放，空格暂停，R 重置。'"
+      :aria-busy="state==='loading'" @keydown="keyControl"
+      @pointerdown.capture="beginCoverGesture" @pointermove.capture="moveCoverGesture"
+      @pointerup.capture="finishCoverGesture" @pointercancel.capture="cancelCoverGesture" @click="openCover"></div>
     <div v-if="state!=='ready'" class="model-state" role="status">
       <template v-if="state==='error'"><strong>暂时无法显示 3D 模型</strong><span>请启用浏览器硬件加速，或重试加载。</span><button @click="mountScene">重新加载</button></template>
       <template v-else><span class="loading-orbit"></span><span>正在准备{{name}}的 3D 模型</span></template>

@@ -20,7 +20,11 @@ function selectBody(id, scroll = false) {
   if (scroll) document.getElementById('explore-model-stage')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 function scrollLibrary() { document.getElementById('explore-library')?.scrollIntoView({ behavior: 'smooth' }); }
-function open(article) { emit('open', { ...article, explore3d: true }); }
+function open(article, source) { emit('open', { ...article, explore3d: true }, source); }
+function openLibraryArticle(article, event) {
+  const source = event?.currentTarget?.closest('.article-card') || event?.target?.closest('.article-card');
+  open(article, source);
+}
 </script>
 
 <template>
@@ -35,7 +39,7 @@ function open(article) { emit('open', { ...article, explore3d: true }); }
           <p>轻轻转动一颗星球，换个角度看宇宙。<br/>从山川与海洋，到遥远星系的光。</p>
           <div class="explore-actions">
             <button class="button primary" @click="scrollLibrary">浏览科普故事 <ArrowRight :size="17"/></button>
-            <button class="button secondary" @click="open(featured)">了解{{bodyNames[featured.image]}} <ArrowUpRight :size="17"/></button>
+            <button class="button secondary" @click="open(featured,$event.currentTarget)">了解{{bodyNames[featured.image]}} <ArrowUpRight :size="17"/></button>
           </div>
           <div class="explore-current">
             <span class="current-rule"></span><span>{{featured.category}} / {{featured.tag}}<strong>{{featured.title}}</strong></span>
@@ -69,11 +73,11 @@ function open(article) { emit('open', { ...article, explore3d: true }); }
       <div class="filter-row" aria-label="知识分类"><button v-for="c in categories" :key="c" :class="{selected:category===c}" :aria-pressed="category===c" @click="category=c">{{c}}</button></div>
       <TransitionGroup v-if="results.length" name="cards" tag="div" class="article-grid library-grid">
         <article v-for="a in results" :key="a.id" class="article-card">
-          <div class="article-model-cover"><ExploreBody3D :body="a.image" compact :suspended="suspended" @focus="selectBody(a.id,true)"/></div>
+          <div class="article-model-cover"><ExploreBody3D :body="a.image" compact :suspended="suspended" @open="openLibraryArticle(a,$event)" @focus="selectBody(a.id,true)"/></div>
           <div class="article-info">
             <div class="card-meta"><span>{{a.category}}</span><span><Clock3 :size="12"/> {{a.minutes}} 分钟阅读</span></div>
-            <h3><button @click="open(a)">{{a.title}}</button></h3><p>{{a.short}}</p>
-            <div class="card-bottom"><button class="text-button model-read-story" @click="open(a)">阅读故事 <ArrowUpRight :size="14"/></button><button class="icon-button" :class="{favorited:favorites.includes(a.id)}" :aria-label="(favorites.includes(a.id)?'取消收藏':'收藏')+a.title" :aria-pressed="favorites.includes(a.id)" @click="emit('favorite',a)"><Bookmark :size="17"/></button></div>
+            <h3><button @click="openLibraryArticle(a,$event)">{{a.title}}</button></h3><p>{{a.short}}</p>
+            <div class="card-bottom"><button class="text-button model-read-story" @click="openLibraryArticle(a,$event)">阅读故事 <ArrowUpRight :size="14"/></button><button class="icon-button" :class="{favorited:favorites.includes(a.id)}" :aria-label="(favorites.includes(a.id)?'取消收藏':'收藏')+a.title" :aria-pressed="favorites.includes(a.id)" @click="emit('favorite',a)"><Bookmark :size="17"/></button></div>
           </div>
         </article>
       </TransitionGroup>
