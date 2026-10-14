@@ -63,3 +63,17 @@ test('upstream failure returns a recoverable map error without pretending to be 
   const response = await handleApi(request('/api/map/terrain/'+tileFor(106.85657,25.65292,10)+'.webp'),{...context,mapFetch:async()=>new Response('denied',{status:403})});
   assert.equal(response.status,502); assert.equal((await response.json()).code,'MAP_UPSTREAM_UNAVAILABLE');
 });
+
+test('unsupported platform cache reads and writes never break a valid tile response', async () => {
+  let calls=0,reads=0,writes=0;
+  const mapFetch=async()=>{calls++;return new Response(new Uint8Array([137,80,78,71]),{headers:{'Content-Type':'image/png','Cache-Control':'public, max-age=604800'}});};
+  const MAP_CACHE={match:async()=>{reads++;throw new Error('platform cache unavailable');},put:async()=>{writes++;throw new Error('platform cache unavailable');}};
+  const req=request('/api/map/base/'+tileFor(121.54404,30.91238,11)+'.png');
+  for(let index=0;index<2;index++){
+    const response=await handleApi(req,{...context,mapFetch,MAP_CACHE});
+    assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/png');
+    assert.equal((await response.arrayBuffer()).byteLength,4);
+  }
+  assert.equal(reads,2);assert.equal(writes,1);assert.equal(calls,1);
+});
+

@@ -21,11 +21,15 @@ export function parseMapTile(path) {
 async function tileResponse(request, headers, tile, context) {
   const key = `${tile.kind}/${tile.z}/${tile.x}/${tile.y}`;
   const cacheRequest = new Request(`https://starwhisper-map-cache.invalid/${key}`);
-  const platformCache = context.MAP_CACHE || globalThis.caches?.default;
+  // Some hosted Worker dispatch environments do not provide a usable Cache
+  // API. Cache reads/writes must never make a valid upstream tile fail.
+  let platformCache;
+  try { platformCache = context.MAP_CACHE || globalThis.caches?.default; } catch {}
   const now = Date.now();
   let saved = tileCache.get(key);
   if (saved?.expires <= now) { tileCache.delete(key); saved = null; }
-  let cached = platformCache ? await platformCache.match(cacheRequest) : null;
+  let cached = null;
+  try { cached = platformCache ? await platformCache.match(cacheRequest) : null; } catch {}
   if (cached) saved = { bytes: await cached.arrayBuffer(), type: cached.headers.get('Content-Type'), ttl: Number(cached.headers.get('X-Map-Ttl')) || WEEK };
   if (!saved) {
     const url = tile.kind === 'base'
@@ -56,7 +60,9 @@ async function tileResponse(request, headers, tile, context) {
       if (ttl > 0 && !/no-store|private/.test(upstream.headers.get('Cache-Control') || '')) {
         tileCache.set(key, saved);
         if (tileCache.size > 128) tileCache.delete(tileCache.keys().next().value);
-        if (platformCache) await platformCache.put(cacheRequest, new Response(bytes, { headers: { 'Content-Type': type, 'Cache-Control': `public, max-age=${ttl}`, 'X-Map-Ttl': String(ttl) } }));
+        if (platformCache) {
+          try { await platformCache.put(cacheRequest, new Response(bytes, { headers: { 'Content-Type': type, 'Cache-Control': `public, max-age=${ttl}`, 'X-Map-Ttl': String(ttl) } })); } catch {}
+        }
       }
     } catch {
       headers.set('Content-Type', 'application/json; charset=utf-8');
@@ -110,3 +116,4 @@ export async function handleObservatoryApi(request, context, headers) {
   }
   return tileResponse(request, headers, tile, context);
 }
+
