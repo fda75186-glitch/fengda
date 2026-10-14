@@ -39,7 +39,9 @@ async function tileResponse(request, headers, tile, context) {
     try {
       upstream = await (context.mapFetch || fetch)(url, {
         headers: { 'User-Agent': 'StarWhisper/0.1.5 (+https://fda75186-glitch.github.io/fengda/)', 'Referer': 'https://fda75186-glitch.github.io/fengda/' },
-        signal: AbortSignal.timeout(10000), redirect: 'error',
+        // The deployed edge runtime accepts manual/follow only. Manual keeps
+        // redirects from leaving the fixed, validated upstream origin.
+        signal: AbortSignal.timeout(10000), redirect: 'manual',
       });
       const type = upstream.headers.get('Content-Type')?.split(';')[0];
       if (!upstream.ok || !['image/png', 'image/webp'].includes(type) || Number(upstream.headers.get('Content-Length')) > MAX_BYTES) throw new Error('Invalid tile response');

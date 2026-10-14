@@ -48,6 +48,7 @@ test('tile relay caches across visitors, keeps CORS, and never forwards credenti
     assert.match(url,/^https:\/\/tile.openstreetmap.org\//);
     assert.match(options.headers['User-Agent'],/StarWhisper/);
     assert.equal(options.headers.Authorization,undefined);
+    assert.equal(options.redirect,'manual');
     return new Response(new Uint8Array([137,80,78,71]), { headers: { 'Content-Type':'image/png', 'Cache-Control':'public, max-age=604800' } });
   };
   for (let index=0;index<2;index++) {
@@ -62,6 +63,13 @@ test('tile relay caches across visitors, keeps CORS, and never forwards credenti
 test('upstream failure returns a recoverable map error without pretending to be a tile', async () => {
   const response = await handleApi(request('/api/map/terrain/'+tileFor(106.85657,25.65292,10)+'.webp'),{...context,mapFetch:async()=>new Response('denied',{status:403})});
   assert.equal(response.status,502); assert.equal((await response.json()).code,'MAP_UPSTREAM_UNAVAILABLE');
+});
+
+test('upstream redirects are rejected rather than followed to an arbitrary host',async()=>{
+  const response=await handleApi(request('/api/map/base/'+tileFor(120,35,12)+'.png'),{...context,mapFetch:async(_url,options)=>{
+    assert.equal(options.redirect,'manual');return new Response(null,{status:302,headers:{Location:'https://other.invalid/tile.png'}});
+  }});
+  assert.equal(response.status,502);assert.equal((await response.json()).code,'MAP_UPSTREAM_UNAVAILABLE');
 });
 
 test('unsupported platform cache reads and writes never break a valid tile response', async () => {
