@@ -118,4 +118,3 @@ export async function handleObservatoryApi(request, context, headers) {
   }
   return tileResponse(request, headers, tile, context);
 }
-

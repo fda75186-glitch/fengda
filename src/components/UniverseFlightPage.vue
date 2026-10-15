@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { Map, X, Rocket, Pause, Play, Volume2, VolumeX, Info, Camera, RotateCcw, ScanLine } from '@lucide/vue';
 import UniverseNavigator from './UniverseNavigator.vue';
 import { assetUrl } from '../assets.js';
@@ -9,7 +9,10 @@ import { createFlightScene } from '../universe/flightScene.js';
 import { useFlightNarration } from '../universe/useFlightNarration.js';
 import { useFlightCamera } from '../universe/useFlightCamera.js';
 
-const emit = defineEmits(['ask', 'navigate']);
+const props=defineProps({initialTarget:Object});
+const emit = defineEmits(['ask', 'navigate', 'consumed']);
+const assistantNotice=ref('');
+let handledAssistantTarget;
 const viewport = ref(null), universe = ref(null), cameraVideo = ref(null);
 const current = shallowRef(journeyStops[0]), arrived = shallowRef(journeyStops[0]);
 const catalog = shallowRef(null), catalogStatus = ref('loading'), markers = shallowRef([]);
@@ -26,6 +29,17 @@ const interiorDestination=computed(()=>explorationFor(arrived.value,catalog.valu
 const nextLevel = computed(() => journeyStops[levelIndex.value + 1]);
 const arrivalTitle = computed(() => arrived.value?.name || current.value.name);
 const travelTarget = computed(() => typeof travel.value.target === 'object' ? travel.value.target?.name : travel.value.target);
+watch([ready,catalogStatus,()=>props.initialTarget],()=>{
+  const target=props.initialTarget;
+  if(!ready.value || !target || handledAssistantTarget===target.requestId)return;
+  if(target.systemName && catalogStatus.value==='loading')return;
+  handledAssistantTarget=target.requestId;
+  if(target.systemName){
+    const system=catalog.value?.systems.find(s=>s.name.toLowerCase()===target.systemName.toLowerCase());
+    if(system)mapJump({stop:exoplanetStop(system)});else{assistantNotice.value=`目录暂未找到 ${target.systemName}，可在宇宙地图继续搜索。`;toggleMap();}
+  }else{const stop=resolveStop(target.stopId);if(stop)mapJump({stop,bodyId:target.bodyId});}
+  emit('consumed');
+},{flush:'post'});
 
 function stopAuto() { autoFlight.value = false; clearTimeout(autoTimer); }
 function sceneFailure(message) {
@@ -141,7 +155,7 @@ onBeforeUnmount(() => {
     <div class="flight-vignette" aria-hidden="true"/>
     <header class="flight-heading"><div><span class="flight-eyebrow">STARWHISPER / DEEP SPACE EXPEDITION</span><h1>AR 宇宙<span>{{current.name}}</span></h1><p>{{current.scale}} · {{current.subtitle}}</p></div><div class="flight-top-actions"><button class="flight-button" :aria-expanded="mapOpen" @click="toggleMap"><Map :size="16"/>宇宙地图</button><button class="flight-button view-switch" @click="changeView">{{view==='cockpit'?'驾驶舱视角':'飞船跟随视角'}}</button><button class="flight-button screen-switch" @click="toggleFullscreen">{{fullscreen?'退出全屏':'全屏体验'}}</button></div></header>
     <div v-show="!travel.wormhole" class="flight-body-markers" aria-label="视野内目的地"><svg class="flight-label-leaders" aria-hidden="true"><line v-for="marker in markers.filter(item=>item.visible)" :key="marker.id" :x1="marker.anchorX" :y1="marker.anchorY" :x2="marker.x" :y2="marker.y"/></svg><button v-for="marker in markers.filter(item=>item.visible)" :key="marker.id" class="flight-body-label" :style="{left:marker.x+'px',top:marker.y+'px',width:marker.width+'px'}" :title="marker.name+' · 点击驶近，双击可探索的结构进入内部'" :aria-label="'飞往'+marker.name" @click="flyTo(marker.id)" @dblclick.stop="enterMarker(marker.id)"><span class="label-dot"/>{{marker.name}}</button></div>
-    <UniverseNavigator v-if="mapOpen" class="flight-map-overlay" :stops="journeyStops" :current="current" :catalog="catalog" :status="catalogStatus" @close="closeMap" @jump="mapJump" @reload="loadCatalog"/>
+    <p v-if="assistantNotice" class="assistant-flight-notice" role="status">{{assistantNotice}}</p><UniverseNavigator v-if="mapOpen" class="flight-map-overlay" :stops="journeyStops" :current="current" :catalog="catalog" :status="catalogStatus" @close="closeMap" @jump="mapJump" @reload="loadCatalog"/>
     <aside v-if="detailOpen" class="flight-information flight-panel" aria-label="抵达科普介绍"><header><span><Info :size="13"/>{{travel.active?'航行目的地':'你正在探索'}}</span><button class="flight-icon" aria-label="收起科普介绍" @click="detailOpen=false"><X :size="17"/></button></header><div class="flight-information-scroll"><span class="flight-information-type">{{arrived.subtitle || current.scale}}</span><h2>{{arrivalTitle}}</h2><p>{{arrived.description}}</p><ul v-if="arrived.detailFacts?.length"><li v-for="fact in arrived.detailFacts" :key="fact">{{fact}}</li></ul><button v-if="interiorDestination" class="flight-button warm flight-enter" @click="enterBody(arrived)"><Rocket :size="16"/>进入{{interiorDestination.name}}</button><div class="flight-narration"><button class="flight-button" @click="narration.speaking.value?narration.stop():narration.speak(arrived)"><VolumeX v-if="narration.speaking.value" :size="15"/><Volume2 v-else :size="15"/>{{narration.speaking.value?'停止讲解':'听听介绍'}}</button><button class="flight-button quiet" :aria-pressed="narration.enabled.value" @click="narration.toggle(arrived)">{{narration.enabled.value?'自动讲解已开':'开启自动讲解'}}</button></div><p v-if="narration.message.value" class="flight-notice" role="status">{{narration.message.value}}</p><a v-if="arrived.sourceUrl" :href="arrived.sourceUrl" target="_blank" rel="noopener noreferrer" class="flight-source">资料来源 · {{arrived.sourceName || 'NASA 科普资料'}}</a><button class="flight-ask" @click="emit('ask',`请介绍${arrivalTitle}，并告诉我资料来源。`)">继续问星语</button></div></aside>
     <button v-else class="flight-button info-toggle" @click="toggleDetail"><Info :size="15"/>科普介绍</button>
     <div v-if="!ready" class="flight-loading" role="status"><template v-if="error"><ScanLine :size="30"/><strong>暂时无法启动宇宙航行</strong><p>{{error}}</p><button class="flight-button warm" @click="startScene">重新启动 3D</button></template><template v-else><span class="flight-loading-ring"/><strong>正在准备飞船与宇宙…</strong><p>从我们的蓝色星球出发</p></template></div>

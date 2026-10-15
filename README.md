@@ -1,12 +1,14 @@
-# 星语正式版0.1.8
+# 星语正式版 0.1.9
 
-2026-10-14用户授权将已确认0.1.8发布到既有GitHub Pages和共享社区后端。包含Vue3/Three.js宇宙飞船与虫洞地图、逐层进入星系和示意系统、观测指南、知识卡、用户名密码社区和图文/文章/视频发布。
+已获用户授权，将人工确认的0.1.9-preview.4发布到原GitHub Pages及共享服务。
 
-前端入口：https://fda75186-glitch.github.io/fengda/
-共享服务：https://xingyu-shared-community.aptbook6.chatgpt.site
+网站：https://fda75186-glitch.github.io/fengda/
+共享API：https://xingyu-shared-community.aptbook6.chatgpt.site
 
-AI星语目前是本地知识匹配演示，未接入LLM或RAG；摄像头是本机叠加，语音是浏览器朗读。NASA真实系外目录与未知结构的科普示意分别标注。不要宣称完整宇宙测绘或实时天象。
+本版接入真实腾讯Hy4流式对话及Function Calling，支持站内检索、知识卡制作、工作室同步和社区文章草稿。知识卡可编辑确认后直接分享到社区，重复确认去重；任何发布仍由用户检查并明确确认。API凭据只存云端Secret，前端和源码中不含凭据。图片生成尚待腾讯模型授权，保持关闭。
 
-Node24和pnpm11开发：pnpm install --frozen-lockfile。GitHub Actions配置/fengda/路径与共享API，构建后发布Pages。86项前端逻辑测试与6项后端测试通过，用户人工确认视觉，无自动UI/GL审核。素材来源和科普来源见docs与public/textures/CREDITS.md。
+保留Vue3/Three.js宇宙航行、虫洞地图与逐层探索、NASA系外目录、观测指南、知识阅读、用户名密码社区及图文文章视频发布。科普示意与真实目录分别标注。
 
-没有上传本机账号、令牌、数据库或用户媒体。保留既有云端D1/R2数据；此次共享地图服务更新不做删除或破坏性迁移。源码可回退到发布前提交b9dcf9fa2337988975275a9e81892fc16dd09766，回退不删除云端用户数据。
+Node24、pnpm11：pnpm install --frozen-lockfile，pnpm test，pnpm build。GitHub Actions设置/fengda/路径及既有共享API后发布。已确认应用166项纯Node检查、真实Hy4制卡及隔离HTTP分享验证通过；用户人工确认视觉，无自动UI/GL审核。
+
+没有上传本机数据库、账号、令牌或媒体。云端保留原D1/R2绑定，只新增image_generations任务表，不删除已有用户数据。AI共享定义位于shared/，后端位于backend/；部署说明见docs。回退可恢复前一前端提交及Sites已保存版本，保留数据库与媒体。

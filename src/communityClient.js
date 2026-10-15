@@ -6,6 +6,7 @@ const apiBase = new URL(import.meta.env.VITE_COMMUNITY_API_URL || '/', window.lo
 const tokenKey = `xingyu-account:${apiBase.origin}`;
 const state = reactive({ user: null, posts: [], loading: false, error: '', mode: import.meta.env.VITE_COMMUNITY_MODE || 'shared', ready: false });
 let token = '';
+export function getCommunityToken() { return token; }
 let loadPromise;
 let events;
 const protectedMedia = new Map();
@@ -35,16 +36,17 @@ const examples = communitySeeds.map((post, index) => normalizePost({ ...post, au
 state.posts = examples;
 
 async function request(path, options = {}) {
+  const requestToken = token;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
   const headers = new Headers(options.headers || {});
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`);
   if (options.json !== undefined) headers.set('Content-Type', 'application/json');
   try {
     const response = await fetch(apiUrl(path), { ...options, headers, body: options.json === undefined ? options.body : JSON.stringify(options.json), signal: controller.signal });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (response.status === 401) { token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {} }
+      if (response.status === 401 && token === requestToken) { token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {} }
       throw new Error(data.error || data.message || (response.status === 404 ? '当前账号服务尚未接入，请使用本版独立预览服务。' : `操作未完成，请稍后重试（${response.status}）。`));
     }
     return data;
@@ -101,10 +103,18 @@ function subscribe() {
 }
 
 async function initialize() {
-  if (token) {
-    try { state.user = (await request('/api/auth/me')).user; }
-    catch { token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {} }
-  }
+  const expectedToken = token;
+  if (expectedToken) {
+    try {
+      const result = await request('/api/auth/me');
+      if (token !== expectedToken) return;
+      state.user = result.user;
+    }
+    catch {
+      if (token && token !== expectedToken) return;
+      token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {}
+    }
+  } else state.user = null;
   await loadPosts();
   if (state.ready) subscribe();
 }
@@ -132,14 +142,22 @@ async function upload(file) {
   return (await request('/api/media', { method: 'POST', headers: { 'Content-Type': file.type, 'X-Filename': encodeURIComponent(file.name) }, body: file })).url;
 }
 
-async function publishPost(payload) {
+async function publishPost(payload, guard = {}) {
+  const checkOwner = () => { if ((guard.ownerId && guard.ownerId !== state.user?.id) || (guard.sessionToken && guard.sessionToken !== token)) throw new Error('登录账号已变化，请重新检查内容后发布。'); };
+  checkOwner();
   if (!state.user) throw new Error('请先登录，再发布你的内容。');
   if (!payload.title?.trim() || !payload.content?.trim()) throw new Error('请填写标题与正文。');
   const images = [];
-  for (const file of payload.images || []) images.push(await upload(file));
+  for (const file of payload.images || []) { checkOwner(); let url;
+    if(file?.ownedMedia){if(file.ownerId!==state.user.id || !/^\/api\/media\/[a-f0-9-]{36}$/.test(file.ownedMedia))throw Error('生成图片的账号或附件格式不正确。');url=file.ownedMedia;}
+    else url=await upload(file);
+    checkOwner(); images.push(url); }
+  checkOwner();
   const videoUrl = payload.video ? await upload(payload.video) : null;
+  checkOwner();
   const coverUrl = payload.cover ? await upload(payload.cover) : null;
-  const result = await request('/api/posts', { method: 'POST', json: { ...payload, kind: payload.type, format: payload.type==='article'?'markdown':'plain', images, video: videoUrl || '', cover: coverUrl || '', title: payload.title.trim(), content: payload.content.trim() } });
+  checkOwner();
+  const result = await request('/api/posts', { method: 'POST', headers: guard.idempotencyKey ? { 'Idempotency-Key': guard.idempotencyKey } : {}, json: { ...payload, kind: payload.type, format: payload.type==='article'?'markdown':'plain', images, video: videoUrl || '', cover: coverUrl || '', title: payload.title.trim(), content: payload.content.trim() } });
   await loadPosts();
   const loaded=state.posts.find(post=>post.id===result.id);
   if(loaded)return loaded;
@@ -172,5 +190,12 @@ async function getPost(id) {
 const store = { state, initialize, loadPosts, login: credentials => authenticate('login', credentials), register: credentials => authenticate('register', credentials), logout, publishPost, likePost, addComment, getPost };
 export function useCommunityStore() { return store; }
 
-window.addEventListener('storage', async event => { if (event.key === tokenKey) { clearPrivateMedia();token = event.newValue || ''; await initialize(); } });
+window.addEventListener('storage', async event => {
+  if (event.key !== tokenKey && event.key !== null) return;
+  clearPrivateMedia();
+  token = event.key === null ? '' : event.newValue || '';
+  // Clear identity synchronously so active AI work stops before any new lookup.
+  state.user = null;
+  await initialize();
+});
 window.addEventListener('beforeunload',()=>{clearPrivateMedia();events?.close();});

@@ -84,4 +84,3 @@ test('unsupported platform cache reads and writes never break a valid tile respo
   }
   assert.equal(reads,2);assert.equal(writes,1);assert.equal(calls,1);
 });
-

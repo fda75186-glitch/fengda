@@ -2,12 +2,42 @@ import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { open } from 'node:fs/promises';
 import { handleApi } from './api.mjs';
 import { createLocalStorage, seedLocalExamples } from './local-adapter.mjs';
 
-export async function createApiServer({ port = 0, dataDir, assetsDir, allowedOrigins = [], host = '127.0.0.1' } = {}) {
+const AI_CONFIG_FIELDS = ['TENCENT_API_KEY', 'TENCENT_AI_ENDPOINT', 'TENCENT_AI_MODEL', 'TENCENT_IMAGE_ENABLED'];
+async function localAiConfig(path) {
+  const environment = Object.fromEntries(AI_CONFIG_FIELDS.map(name => [name, process.env[name]]));
+  if (!path) return environment;
+  let file;
+  try {
+    file = await open(path, 'r');
+    const bytes = Buffer.alloc(16385);
+    const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+    if (bytesRead > 16384) throw new Error('Invalid configuration');
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, bytesRead)));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid configuration');
+    const selected = {};
+    for (const name of AI_CONFIG_FIELDS) {
+      if (Object.hasOwn(value, name)) {
+        if (typeof value[name] !== 'string') throw new Error('Invalid configuration');
+        selected[name] = value[name];
+      }
+    }
+    return { ...environment, ...selected };
+  } catch (error) {
+    if (error.code === 'ENOENT') return environment;
+    // Never expose file paths, file contents or credentials in errors/status/logs.
+    return { TENCENT_API_KEY: '', aiConfigInvalid: true };
+  } finally { await file?.close(); }
+}
+
+export async function createApiServer({ port = 0, dataDir, assetsDir, allowedOrigins = [], host = '127.0.0.1', aiConfigFile } = {}) {
   if (!dataDir) throw new Error('An explicit isolated dataDir is required');
   if (host !== '127.0.0.1') throw new Error('The preview API binds only to 127.0.0.1');
+  if (aiConfigFile !== undefined && (typeof aiConfigFile !== 'string' || !aiConfigFile)) throw new Error('An explicit AI configuration file path is required');
+  const credentialPath = aiConfigFile ? resolve(aiConfigFile) : undefined;
   const storage = await createLocalStorage(dataDir);
   try { await seedLocalExamples(storage, assetsDir); } catch (error) { storage.close(); throw error; }
   const subscriptions = new Set();
@@ -32,7 +62,8 @@ export async function createApiServer({ port = 0, dataDir, assetsDir, allowedOri
         method, headers: requestHeaders, signal: abort.signal,
         ...(['GET', 'HEAD'].includes(method) ? {} : { body: Readable.toWeb(incoming), duplex: 'half' }),
       });
-      const response = await handleApi(request, { ...context, remoteAddress: incoming.socket.remoteAddress });
+      const ai = new URL(request.url).pathname.startsWith('/api/ai/') ? await localAiConfig(credentialPath) : {};
+      const response = await handleApi(request, { ...context, ...ai, remoteAddress: incoming.socket.remoteAddress });
       outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()));
       if (!response.body) { outgoing.end(); incoming.resume(); return; }
       const readable = Readable.fromWeb(response.body);
@@ -68,11 +99,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const port = Number(option('--port', '0'));
   const dataDir = option('--data-dir');
   const assetsDir = option('--assets-dir');
-  if (!dataDir || !Number.isInteger(port) || port < 0 || port > 65535) {
-    console.error('Usage: node backend/dev-server.mjs --port 0 --data-dir <isolated-directory> [--assets-dir <public/images>]');
+  const aiConfigFile = option('--ai-config-file');
+  if (!dataDir || !Number.isInteger(port) || port < 0 || port > 65535 || (args.includes('--ai-config-file') && !aiConfigFile)) {
+    console.error('Usage: node backend/dev-server.mjs --port 0 --data-dir <isolated-directory> [--assets-dir <public/images>] [--ai-config-file <private-json-file>]');
     process.exitCode = 1;
   } else {
-    const app = await createApiServer({ port, dataDir, assetsDir });
+    const app = await createApiServer({ port, dataDir, assetsDir, aiConfigFile });
     console.log(JSON.stringify({ url: app.url, storage: 'isolated local SQLite + files' }));
     const stop = async () => { await app.close(); process.exit(0); };
     process.once('SIGINT', stop);

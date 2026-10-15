@@ -1,5 +1,6 @@
 <script setup>
 import UniverseFlightPage from './UniverseFlightPage.vue';
-defineEmits(['ask', 'navigate']);
+defineProps({initialTarget:Object});
+defineEmits(['ask', 'navigate', 'consumed']);
 </script>
-<template><UniverseFlightPage @ask="$emit('ask', $event)" @navigate="$emit('navigate', $event)"/></template>
+<template><UniverseFlightPage :initial-target="initialTarget" @consumed="$emit('consumed')" @ask="$emit('ask', $event)" @navigate="$emit('navigate', $event)"/></template>

@@ -3,10 +3,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { Bold, Check, FileText, Hash, Heading, ImagePlus, Link, List, LoaderCircle, Plus, Quote, Redo2, Save, Smile, Trash2, Undo2, Video, X } from '@lucide/vue';
 import SaturnLogo from './SaturnLogo.vue';
 import SafeMarkdown from './SafeMarkdown.vue';
-import { useCommunityStore } from '../communityClient.js';
+import { useCommunityStore, getCommunityToken } from '../communityClient.js';
+import { createImageClient } from '../imageClient.js';
+import { validateGeneratedImage } from '../../shared/image-generation.mjs';
+import { validateAssistantAction } from '../../shared/assistant-tools.mjs';
 import { deletePublishingDraft, listPublishingDrafts, readPublishingDraft, savePublishingDraft } from '../communityDrafts.js';
 
-const emit = defineEmits(['navigate', 'login', 'published', 'notify']);
+const props=defineProps({assistantDraft:Object,initialKind:String});
+const emit = defineEmits(['navigate', 'login', 'published', 'notify', 'consumed']);
 const store = useCommunityStore();
 const user = computed(() => store.state.user);
 const categories = ['观星日记', '天文问答', '摄影分享', '学习交流'];
@@ -28,7 +32,7 @@ const canUndo = computed(() => historyIndex.value > 0), canRedo = computed(() =>
 let saveTimer, alive = true, loadingDraft = false, autoSaveFlight = Promise.resolve();
 
 function uid() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
-function mediaEntry(file, id = uid()) { return { id, file, url: URL.createObjectURL(file) }; }
+function mediaEntry(file, id = uid(), ownedMedia = '', ownerId = '') { return { id, file, ownedMedia, ownerId, url: URL.createObjectURL(file) }; }
 function release(entry) { if (entry?.url) URL.revokeObjectURL(entry.url); }
 function inform(message) { status.value = message; }
 function remember() {
@@ -142,7 +146,7 @@ function removeCover() { release(cover.value); cover.value = null; }
 function snapshot(id) {
   return { id, version: 1, updatedAt: Date.now(), userId: user.value?.id || null,
     fields: { ...draft, communities: [...draft.communities], topics: [...draft.topics] },
-    images: images.value.map(item => ({ id: item.id, file: item.file })),
+    images: images.value.map(item => ({ id: item.id, file: item.file, ownedMedia: item.ownedMedia, ownerId: item.ownerId })),
     video: video.value ? { id: video.value.id, file: video.value.file } : null,
     cover: cover.value ? { id: cover.value.id, file: cover.value.file } : null,
   };
@@ -171,7 +175,7 @@ async function loadDraft(value) {
   loadingDraft = true;
   images.value.forEach(release); release(video.value); release(cover.value);
   Object.assign(draft, value.fields);
-  images.value = (value.images || []).filter(item => item.file instanceof Blob).map(item => mediaEntry(item.file, item.id));
+  images.value = (value.images || []).filter(item => item.file instanceof Blob).map(item => mediaEntry(item.file, item.id, item.ownedMedia, item.ownerId));
   video.value = value.video?.file instanceof Blob ? mediaEntry(value.video.file, value.video.id) : null;
   cover.value = value.cover?.file instanceof Blob ? mediaEntry(value.cover.file, value.cover.id) : null;
   history.value = [{ title: draft.title, content: draft.content }]; historyIndex.value = 0;
@@ -219,7 +223,7 @@ async function publish() {
   if (!user.value) { await autoSave(); emit('login'); inform('登录后即可发布，当前编辑内容已保留。'); return; }
   busy.value = true; clearTimeout(saveTimer); status.value = '正在上传附件并发布，请保留此页面…';
   try {
-    const post = await store.publishPost({ type: draft.type, title: draft.title.trim(), content: draft.content.trim(), category: draft.communities[0], communities: [...draft.communities], topics: [...draft.topics], images: draft.type === 'video' ? [] : images.value.map(item => item.file), video: draft.type === 'video' ? video.value?.file : null, cover: draft.type === 'video' ? cover.value?.file : null, visibility: draft.visibility, originality: draft.originality, sourceUrl: draft.originality === 'repost' ? draft.sourceUrl.trim() : '' });
+    const post = await store.publishPost({ type: draft.type, title: draft.title.trim(), content: draft.content.trim(), category: draft.communities[0], communities: [...draft.communities], topics: [...draft.topics], images: draft.type === 'video' ? [] : images.value.map(item => item.ownedMedia ? {ownedMedia:item.ownedMedia,ownerId:item.ownerId} : item.file), video: draft.type === 'video' ? video.value?.file : null, cover: draft.type === 'video' ? cover.value?.file : null, visibility: draft.visibility, originality: draft.originality, sourceUrl: draft.originality === 'repost' ? draft.sourceUrl.trim() : '' }, draft.aiActionId ? { ownerId:draft.aiOwnerId,sessionToken:getCommunityToken(),idempotencyKey:draft.aiActionId } : {});
     try { await autoSaveFlight.catch(() => {}); await deletePublishingDraft('current-edit'); if (activeSavedDraftId.value) await deletePublishingDraft(activeSavedDraftId.value); } catch { /* A successful post is retained even when draft cleanup fails. */ }
     draft.title = ''; draft.content = ''; images.value.forEach(release); images.value = []; removeVideo(); removeCover();
     history.value = [{ title: '', content: '' }]; historyIndex.value = 0; activeSavedDraftId.value = null;
@@ -241,7 +245,29 @@ watch(draft, scheduleSave, { deep: true });
 watch([images, video, cover], scheduleSave, { deep: true });
 onMounted(async () => {
   window.addEventListener('keydown', keyboard);
-  try { const current = await readPublishingDraft('current-edit'); if (current && !hasContent()) { await loadDraft(current); inform('已恢复上次未完成的编辑。'); } }
+  try {
+    const current = await readPublishingDraft('current-edit');
+    if(props.assistantDraft){
+      const a=validateAssistantAction(props.assistantDraft);
+      if(a.type!=='community_draft' || props.assistantDraft.ownerId!==user.value?.id)throw Error('AI草稿账号不匹配，原草稿已保留。');
+      if(current)await savePublishingDraft({...current,id:uid(),updatedAt:Date.now()});
+      Object.assign(draft,a.draft,{communities:[a.draft.category],content:a.draft.content+'\n\n---\n*本文由星语AI辅助整理，请核实重要事实。*',aiActionId:a.id,aiOwnerId:user.value.id});
+      const importOwner=user.value.id;
+      const imageClient=createImageClient({apiBase:new URL(import.meta.env.VITE_COMMUNITY_API_URL || '/',window.location.origin),getSession:()=>({userId:user.value?.id,token:getCommunityToken()})});
+      for(const raw of props.assistantDraft.generatedImages || []) {
+        const image=validateGeneratedImage(raw), blob=await imageClient.read(image,importOwner);
+        if(!alive || user.value?.id!==importOwner)throw Error('账号已变化，图片未导入。');
+        const file=new File([blob],`AI科普示意-${image.id}.${blob.type.split('/')[1]}`,{type:blob.type});
+        images.value.push(mediaEntry(file,uid(),image.media,importOwner));
+        draft.content+='\n\n![AI生成科普示意，非实拍](image:'+images.value.length+')';
+      }
+      remember();inform('已载入AI文章草稿，可编辑并添加图片或视频；原编辑内容保存在草稿箱。');emit('consumed');
+    }else if(props.initialKind){
+      if(current)await savePublishingDraft({...current,id:uid(),updatedAt:Date.now()});
+      if(['image','video'].includes(props.initialKind))draft.type=props.initialKind;
+      inform('请选择自己的图片或视频素材后继续编辑，原草稿已保留。');emit('consumed');
+    }else if (current && !hasContent()) { await loadDraft(current); inform('已恢复上次未完成的编辑。'); }
+  }
   catch (error) { inform(error.message); }
   finally { initialized.value = true; }
 });

@@ -1,5 +1,7 @@
+import { getImageStatus, generateImage, imageResult, recentImages } from './ai-images.mjs';
 // Shared domain API. Both the local SQLite adapter and Cloudflare D1/R2 call this code.
 import { handleObservatoryApi } from './observatory-api.mjs';
+import { AiError, getAiStatus, streamAiChat } from './ai.mjs';
 const encoder = new TextEncoder();
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const PASSWORD_ITERATIONS = 100000;
@@ -226,12 +228,24 @@ async function createPost(request, context, session) {
   if (!['plain', 'markdown'].includes(format)) fail(400, 'VALIDATION', '正文格式不正确');
   const target = valueText(input.target || '', 0, 40, '观测对象');
   const location = valueText(input.location || '', 0, 60, '观测地点');
-  const id = crypto.randomUUID();
+  const publicationKey = request.headers.get('Idempotency-Key');
+  if (publicationKey !== null && !/^[a-zA-Z0-9-]{16,80}$/.test(publicationKey)) fail(400, 'IDEMPOTENCY_INVALID', '发布确认标识不正确');
+  const hash = publicationKey ? await digest(`publication:${session.owner}:${publicationKey}`) : '';
+  const id = publicationKey ? `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}` : crypto.randomUUID();
+  const expected = { owner: session.owner, title, content, category, target, location, images: JSON.stringify(checkedImages), kind, communities: JSON.stringify(communities), topics: JSON.stringify(topics), video, cover, visibility, originality, source_url: sourceUrl, format };
+  const checkReplay = post => {
+    if (Object.entries(expected).some(([key, value]) => post[key] !== value)) fail(409, 'IDEMPOTENCY_CONFLICT', '该确认已用于另一版内容，请先核对原发布结果');
+  };
+  if (publicationKey) {
+    const existing = await context.DB.prepare('SELECT * FROM posts WHERE id=?').bind(id).first();
+    if (existing) { checkReplay(existing); return json(request, context, { id, replayed: true }); }
+  }
   const createdAt = Date.now();
   await context.DB.batch([
-    context.DB.prepare('INSERT INTO posts(id,owner,author,title,content,category,target,location,images,created_at,kind,communities,topics,video,cover,visibility,originality,source_url,format) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, session.owner, session.user.name, title, content, category, target, location, JSON.stringify(checkedImages), createdAt, kind, JSON.stringify(communities), JSON.stringify(topics), video, cover, visibility, originality, sourceUrl, format),
+    context.DB.prepare('INSERT INTO posts(id,owner,author,title,content,category,target,location,images,created_at,kind,communities,topics,video,cover,visibility,originality,source_url,format) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(id, session.owner, session.user.name, title, content, category, target, location, JSON.stringify(checkedImages), createdAt, kind, JSON.stringify(communities), JSON.stringify(topics), video, cover, visibility, originality, sourceUrl, format),
     recordEvent(context, session.owner),
   ]);
+  if (publicationKey) checkReplay(await context.DB.prepare('SELECT * FROM posts WHERE id=?').bind(id).first());
   context.notify?.();
   return json(request, context, { id }, 201);
 }
@@ -368,6 +382,18 @@ export async function handleApi(request, context) {
     if (!allowedOrigin(request.headers.get('Origin'), context, request)) fail(403, 'ORIGIN_DENIED', '此来源无权访问社区服务');
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: headersFor(request, context) });
     const path = new URL(request.url).pathname;
+    if (request.method === 'GET' && path === '/api/ai/status') return json(request, context, { ...getAiStatus(context), images: getImageStatus(context) });
+    if (request.method === 'POST' && ['/api/ai/chat', '/api/ai/agent'].includes(path)) {
+      const session = await authenticated(request, context);
+      return await streamAiChat(request, context, session, headersFor(request, context), rate, path === '/api/ai/agent');
+    }
+    const imageMatch = path.match(/^\/api\/ai\/images\/([a-f0-9-]{36})$/);
+    if (path === '/api/ai/images' || imageMatch) {
+      const session = await authenticated(request, context);
+      if (request.method === 'GET') return json(request, context, imageMatch ? await imageResult(context, session.owner, imageMatch[1]) : await recentImages(context, session.owner));
+      if (request.method === 'POST' && !imageMatch) return json(request, context, await generateImage(request, context, session, rate));
+      fail(405, 'METHOD_NOT_ALLOWED', '不支持此操作');
+    }
     const mapResponse = await handleObservatoryApi(request, context, headersFor(request, context));
     if (mapResponse) return mapResponse;
     if (request.method === 'GET' && path === '/api/health') {
@@ -391,10 +417,11 @@ export async function handleApi(request, context) {
     if (postMatch && UUID.test(postMatch[1])) return await postAction(request, context, session, postMatch[1], postMatch[2]);
     fail(404, 'NOT_FOUND', '没有找到此接口');
   } catch (error) {
-    if (!(error instanceof ApiError)) {
+    const known = error instanceof ApiError || error instanceof AiError;
+    if (!known) {
       // Do not log request bodies, passwords, bearer tokens or storage contents.
       console.error('Community API internal failure');
     }
-    return json(request, context, { error: error instanceof ApiError ? error.message : '社区数据服务暂时不可用，请稍后重试', code: error.code || 'INTERNAL_ERROR' }, error.status || 500);
+    return json(request, context, { error: known ? error.message : '社区数据服务暂时不可用，请稍后重试', code: known ? error.code : 'INTERNAL_ERROR' }, known ? error.status : 500);
   }
 }

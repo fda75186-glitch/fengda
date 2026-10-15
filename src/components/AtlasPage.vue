@@ -4,7 +4,11 @@ import { Orbit, ArrowUpRight, Pause, Play, Info, ExternalLink } from '@lucide/vu
 import { planets } from '../knowledge.js';
 import { ORBIT_SCENE, orbitLayouts, orbitPosition, advanceOrbitTime } from '../orbits.js';
 defineEmits(['ask', 'open']);
+const props=defineProps({initialPlanet:String,initialMode:String,initialMetric:String});
 const selected = ref(planets[2]), paused = ref(false), mode = ref('orbit'), metric = ref('diameter');
+watch(()=>props.initialPlanet,id=>{const planet=planets.find(p=>p.en.toLowerCase()===id);if(planet)selected.value=planet;},{immediate:true});
+watch(()=>props.initialMode,value=>{if(['orbit','compare'].includes(value))mode.value=value;},{immediate:true});
+watch(()=>props.initialMetric,value=>{if(['diameter','year','distance'].includes(value))metric.value=value;},{immediate:true});
 const units = { diameter: '千米', year: '地球年', distance: 'AU' };
 const maxValue = computed(() => Math.max(...planets.map(p => p[metric.value])));
 const metricName = { diameter: '赤道直径', year: '公转周期', distance: '距太阳平均距离' };

@@ -15,7 +15,7 @@ const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; char
 
 async function serve() {
   mkdirSync(runtime, { recursive:true });
-  const communityApi = await createApiServer({ port:0, dataDir:resolve(runtime,'community-data'), assetsDir:resolve(folder,'public/images') });
+  const communityApi = await createApiServer({ port:0, dataDir:resolve(runtime,'community-data'), assetsDir:resolve(folder,'public/images'), aiConfigFile:resolve(folder,'.env.ai.local.json') });
   const server = http.createServer((request, response) => {
     let pathname;
     try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
@@ -59,7 +59,7 @@ async function serve() {
   server.listen(0, '127.0.0.1', () => {
     const port = server.address().port;
     writeFileSync(stateFile, JSON.stringify({ port, identity }));
-    process.send?.({ url:`http://127.0.0.1:${port}/#community` });
+    process.send?.({ url:`http://127.0.0.1:${port}/#home` });
     if (process.connected) process.disconnect();
   });
   server.on('error', error => { console.error(error.message); process.exit(1); });
@@ -73,7 +73,7 @@ async function launch() {
     const state = JSON.parse(readFileSync(stateFile, 'utf8'));
     if (state.identity === identity && Number.isInteger(state.port) && state.port > 0 && state.port < 65536) {
       const response = await fetch(`http://127.0.0.1:${state.port}/__xingyu_preview`, { signal:AbortSignal.timeout(1200) });
-      if (response.ok && (await response.json()).identity === identity) url = `http://127.0.0.1:${state.port}/#community`;
+      if (response.ok && (await response.json()).identity === identity) url = `http://127.0.0.1:${state.port}/#home`;
     }
   } catch { /* A stale port after a restart simply needs a new server. */ }
   if (!url) {

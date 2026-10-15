@@ -8,8 +8,8 @@ import CommunityPostCard from './CommunityPostCard.vue';
 import { capturePostSurface, morphPostSurface } from '../postMorph.js';
 import '../community-feed.css';
 
-const props = defineProps({ initialPost: String });
-const emit = defineEmits(['ask', 'navigate', 'login', 'notify', 'viewed']);
+const props = defineProps({ initialPost: String, initialQuery: String });
+const emit = defineEmits(['ask', 'navigate', 'login', 'notify', 'viewed', 'searched']);
 const store = useCommunityStore();
 const categories = ['全部', '观星日记', '天文问答', '摄影分享', '学习交流'];
 const channels = [
@@ -23,6 +23,7 @@ const channels = [
 ];
 const featuredTopics = [{ label: '今晚的月亮', query: '月亮' }, { label: '第一次观星', query: '第一次' }, { label: '我的星空照片', query: '星空' }, { label: '望远镜怎么选', query: '望远镜' }];
 const query = ref(''), category = ref('全部'), channelId = ref('all');
+watch(()=>props.initialQuery,value=>{if(value){query.value=value;category.value='全部';channelId.value='all';emit('searched');}},{immediate:true});
 const sortBy = ref('recommend'), notice = ref(''), loadError = ref('');
 const busyIds = ref(new Set()), activeId = ref(null), detailDialog = ref(null), communityHub = ref(null);
 const comment = ref(''), commentError = ref(''), submitting = ref(false);

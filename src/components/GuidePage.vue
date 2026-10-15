@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, watch } from 'vue';
 import { Telescope, MapPin, Moon, Backpack, Cloud, RefreshCw, BookOpen } from '@lucide/vue';
 import { articles as baseArticles } from '../knowledge.js';
 import { additionalGuideKnowledge } from '../guideKnowledge.js';
@@ -7,10 +7,13 @@ import { useObservatories } from '../useObservatories.js';
 import ObservatoryMap from './ObservatoryMap.vue';
 import ObservatoryInfoDialog from './ObservatoryInfoDialog.vue';
 
-defineEmits(['open', 'navigate']);
+const props=defineProps({initialPlace:String});
+const emit=defineEmits(['open', 'navigate', 'consumed']);
 const articles = [...baseArticles, ...additionalGuideKnowledge];
 const { places, status, reconnect } = useObservatories();
-const selectedId = ref('xinglong'), openedId = ref(null), mapRef = ref(null);
+const selectedId = ref(props.initialPlace || 'xinglong'), openedId = ref(null), mapRef = ref(null);
+onMounted(()=>{if(props.initialPlace){selectPlace(props.initialPlace);emit('consumed');}});
+watch(()=>props.initialPlace,id=>{if(id){selectPlace(id);emit('consumed');}});
 const openedSource = ref(null);
 const openedPlace = computed(() => places.value.find(place => place.id === openedId.value) || null);
 const tipCards = [
