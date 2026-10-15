@@ -6,6 +6,7 @@ const MODEL = 'hy-image-v3';
 const MAX_BYTES = 8 * 1024 * 1024;
 const MESSAGES = {
   IMAGE_ACCESS: '腾讯生图模型尚未开通或当前 Key 无权调用，请管理员开通 Hy-Image-3.0 并加入此 Key 的可访问范围。',
+  IMAGE_BILLING: '腾讯图片服务没有可用额度或尚未开启计费，请管理员在腾讯控制台检查该图片服务的后付费状态。',
   IMAGE_LIMIT: '生图额度或频率受限，请稍后再试。',
   IMAGE_BLOCKED: '图片请求未通过腾讯内容审核，请调整描述。',
   IMAGE_TIMEOUT: '图片生成超时，未自动重试。请先检查本次结果。',
@@ -119,6 +120,7 @@ export async function generateImage(request, context, session, rate) {
     let payload; try { payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail(502, 'IMAGE_INVALID'); }
     if (!response.ok || payload.error) {
       const code = String(payload.error?.code || '');
+      if (response.status === 402 || ['401007', '401008', '403004'].includes(code)) fail(402, 'IMAGE_BILLING');
       if ([401,403].includes(response.status) || code === '401006') fail(503, 'IMAGE_ACCESS');
       if (response.status === 429) fail(429, 'IMAGE_LIMIT');
       if (response.status === 422 || /content_filter|moderation/i.test(code)) fail(422, 'IMAGE_BLOCKED');

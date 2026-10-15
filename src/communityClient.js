@@ -8,11 +8,44 @@ const state = reactive({ user: null, posts: [], loading: false, error: '', mode:
 let token = '';
 export function getCommunityToken() { return token; }
 let loadPromise;
+let sessionVersion = 0;
 let events;
 const protectedMedia = new Map();
 try { token = localStorage.getItem(tokenKey) || ''; } catch {}
 const categoryMap = { 星空摄影: '摄影分享', 行星观测: '观星日记' };
 const apiUrl = path => new URL(path, apiBase).href;
+export const communityHealthUrl = apiUrl('/api/health');
+
+function connectionError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
+export async function checkCommunityConnection() {
+  const probes = [
+    ['服务连接', '/api/health', {}],
+    ['社区读取', '/api/posts', {}],
+    ['跨域预检', '/api/health', { headers: { Authorization: 'Bearer connection-check' } }],
+    ['注册接口校验', '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }],
+  ];
+  const checks = await Promise.all(probes.map(async ([label, path, options]) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(apiUrl(path), { method: 'GET', mode: 'cors', credentials: 'omit', cache: 'no-store', ...options, headers: options.headers || {}, signal: controller.signal });
+      if (options.method === 'POST') {
+        const result = await response.json().catch(() => null);
+        const expected = response.status === 400 && result?.code === 'VALIDATION';
+        return { label, status: expected ? 'ok' : 'http', httpStatus: response.status, expected };
+      }
+      // Only connectivity and status are needed; never include account or post data.
+      response.body?.cancel().catch(() => {});
+      return { label, status: response.ok ? 'ok' : 'http', httpStatus: response.status };
+    } catch (error) {
+      return { label, status: error.name === 'AbortError' ? 'timeout' : 'network' };
+    } finally { clearTimeout(timer); }
+  }));
+  return { origin: window.location.origin, service: apiBase.origin, checks };
+}
 
 function mediaUrl(value) {
   if (!value || typeof value !== 'string') return '';
@@ -35,7 +68,23 @@ function normalizePost(post) {
 const examples = communitySeeds.map((post, index) => normalizePost({ ...post, author: { id: 'editor', name: '星语编辑', avatar: null }, content: post.content.replace('示例话题：', '').replace('欢迎在本机评论里写下你的观察。', '你可以分享自己的观测记录，与更多爱好者一起交流。'), type: index === 3 ? 'article' : 'image', topics: [['月相观察', '第一次观星'], ['土星', '太阳系'], ['星空摄影', '观测记录'], ['地球', '科普交流']][index], comments: [], likes: 0, example: true }));
 state.posts = examples;
 
+function sessionSnapshot() { return { version: sessionVersion, token, userId: state.user?.id || '' }; }
+function currentSession(session) { return session.version === sessionVersion && session.token === token && session.userId === (state.user?.id || ''); }
+function setSession(nextToken, user) {
+  if (nextToken !== token || user?.id !== state.user?.id) {
+    sessionVersion++;
+    clearPrivateMedia();
+    state.posts = state.posts.filter(post => post.visibility !== 'private').map(post => ({ ...post, owned: false, liked: false }));
+    loadPromise = undefined;
+    state.loading = false;
+    state.error = '';
+  }
+  token = nextToken;
+  state.user = user;
+}
+
 async function request(path, options = {}) {
+  const session = sessionSnapshot();
   const requestToken = token;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000);
@@ -46,35 +95,41 @@ async function request(path, options = {}) {
     const response = await fetch(apiUrl(path), { ...options, headers, body: options.json === undefined ? options.body : JSON.stringify(options.json), signal: controller.signal });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (response.status === 401 && token === requestToken) { token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {} }
-      throw new Error(data.error || data.message || (response.status === 404 ? '当前账号服务尚未接入，请使用本版独立预览服务。' : `操作未完成，请稍后重试（${response.status}）。`));
+      let invalidatedVersion;
+      if (response.status === 401 && currentSession(session)) { setSession('', null); invalidatedVersion = sessionVersion; try { localStorage.removeItem(tokenKey); } catch {} }
+      throw Object.assign(new Error(data.error || data.message || (response.status === 404 ? '共享社区接口暂时不可用，请稍后重试。' : `操作未完成，请稍后重试（${response.status}）。`)), { status: response.status, code: response.status === 404 ? 'COMMUNITY_ENDPOINT' : data.code, invalidatedVersion });
     }
     return data;
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error('连接超时，请稍后再试。');
-    if (error instanceof TypeError) throw new Error('暂时无法连接社区服务，请确认预览服务正在运行。');
+    if (error.name === 'AbortError') throw connectionError('连接共享社区超时，请稍后重试或切换网络。', 'COMMUNITY_TIMEOUT');
+    if (error instanceof TypeError) throw connectionError('当前网络暂时无法连接共享社区，请稍后重试或切换网络。', 'COMMUNITY_NETWORK');
     throw error;
   } finally { clearTimeout(timer); }
 }
 
 async function loadPosts() {
-  if (loadPromise) return loadPromise;
+  const session = sessionSnapshot();
+  if (loadPromise?.session.version === session.version) return loadPromise.promise;
+  const load = { session, promise: null };
+  loadPromise = load;
   state.loading = true;
   state.error = '';
-  loadPromise = (async () => {
+  load.promise = (async () => {
     try {
       const result = await request('/api/posts');
+      if (!currentSession(session)) return;
       const posts=(result.posts || []).map(normalizePost);
-      await resolvePrivateMedia(posts);
+      await resolvePrivateMedia(posts, session);
+      if (!currentSession(session)) return;
       state.posts = posts.length ? posts : examples;
       state.ready = true;
-    } catch (error) { state.error = error.message; }
-    finally { state.loading = false; loadPromise = undefined; }
+    } catch (error) { if (currentSession(session)) state.error = error.message; }
+    finally { if (loadPromise === load && currentSession(session)) { state.loading = false; loadPromise = undefined; } }
   })();
-  return loadPromise;
+  return load.promise;
 }
 
-async function resolvePrivateMedia(posts) {
+async function resolvePrivateMedia(posts, session = sessionSnapshot()) {
   const attachments=[];
   for(const post of posts) {
     if(post.visibility!=='private')continue;
@@ -83,13 +138,19 @@ async function resolvePrivateMedia(posts) {
     if(post.video?.poster)attachments.push([post.video,'poster']);
   }
   const results=await Promise.allSettled(attachments.map(async ([object,key])=>{
-    const url=object[key], cacheKey=`${state.user?.id}:${url}`;
+    if (!currentSession(session)) return;
+    const url=object[key], cacheKey=`${session.version}:${session.userId}:${url}`;
     if(protectedMedia.has(cacheKey)){object[key]=protectedMedia.get(cacheKey);return;}
-    const response=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});
+    const response=await fetch(url,{headers:{Authorization:`Bearer ${session.token}`}});
+    if (!currentSession(session)) { response.body?.cancel().catch(() => {}); return; }
     if(!response.ok)throw new Error('私密内容附件暂时无法读取，请重新登录后重试。');
-    const blobUrl=URL.createObjectURL(await response.blob());
+    const blob = await response.blob();
+    if (!currentSession(session)) return;
+    const blobUrl=URL.createObjectURL(blob);
+    if (!currentSession(session)) { URL.revokeObjectURL(blobUrl); return; }
     protectedMedia.set(cacheKey,blobUrl);object[key]=blobUrl;
   }));
+  if (!currentSession(session)) return;
   const failed=results.find(result=>result.status==='rejected');
   if(failed)state.error=failed.reason.message;
 }
@@ -103,35 +164,47 @@ function subscribe() {
 }
 
 async function initialize() {
-  const expectedToken = token;
-  if (expectedToken) {
+  const session = sessionSnapshot();
+  let lookupError = '';
+  if (session.token) {
     try {
       const result = await request('/api/auth/me');
-      if (token !== expectedToken) return;
-      state.user = result.user;
+      if (!currentSession(session)) return;
+      setSession(session.token, result.user);
     }
-    catch {
-      if (token && token !== expectedToken) return;
-      token = ''; state.user = null; try { localStorage.removeItem(tokenKey); } catch {}
+    catch (error) {
+      if (!currentSession(session) && error.invalidatedVersion !== sessionVersion) return;
+      // Only an explicit 401 invalidates a session; a temporary connection failure does not.
+      lookupError = error.message;
     }
-  } else state.user = null;
+  } else setSession('', null);
+  const loadSession = sessionSnapshot();
   await loadPosts();
+  if (!currentSession(loadSession)) return;
+  if (lookupError && !state.error) state.error = lookupError;
   if (state.ready) subscribe();
 }
 
 async function authenticate(kind, credentials) {
+  const session = sessionSnapshot();
   const result = await request(`/api/auth/${kind}`, { method: 'POST', json: credentials });
-  token = result.token;
-  state.user = result.user;
+  if (!currentSession(session)) throw new Error('登录账号已变化，请重新登录。');
+  setSession(result.token, result.user);
   try { localStorage.setItem(tokenKey, token); } catch {}
+  const authenticatedSession = sessionSnapshot();
   await loadPosts();
+  if (!currentSession(authenticatedSession)) throw new Error('登录账号已变化，请重新登录。');
   subscribe();
   return result.user;
 }
 
 async function logout() {
-  try { if (token) await request('/api/auth/logout', { method: 'POST' }); }
-  finally { token = ''; state.user = null; clearPrivateMedia(); try { localStorage.removeItem(tokenKey); } catch {} await loadPosts(); }
+  const pending = token ? request('/api/auth/logout', { method: 'POST' }) : null;
+  setSession('', null);
+  try { localStorage.removeItem(tokenKey); } catch {}
+  const session = sessionSnapshot();
+  try { if (pending) await pending; }
+  finally { if (currentSession(session)) await loadPosts(); }
 }
 
 async function upload(file) {
@@ -143,7 +216,8 @@ async function upload(file) {
 }
 
 async function publishPost(payload, guard = {}) {
-  const checkOwner = () => { if ((guard.ownerId && guard.ownerId !== state.user?.id) || (guard.sessionToken && guard.sessionToken !== token)) throw new Error('登录账号已变化，请重新检查内容后发布。'); };
+  const session = sessionSnapshot();
+  const checkOwner = () => { if (!currentSession(session) || (guard.ownerId && guard.ownerId !== state.user?.id) || (guard.sessionToken && guard.sessionToken !== token)) throw new Error('登录账号已变化，请重新检查内容后发布。'); };
   checkOwner();
   if (!state.user) throw new Error('请先登录，再发布你的内容。');
   if (!payload.title?.trim() || !payload.content?.trim()) throw new Error('请填写标题与正文。');
@@ -158,12 +232,14 @@ async function publishPost(payload, guard = {}) {
   const coverUrl = payload.cover ? await upload(payload.cover) : null;
   checkOwner();
   const result = await request('/api/posts', { method: 'POST', headers: guard.idempotencyKey ? { 'Idempotency-Key': guard.idempotencyKey } : {}, json: { ...payload, kind: payload.type, format: payload.type==='article'?'markdown':'plain', images, video: videoUrl || '', cover: coverUrl || '', title: payload.title.trim(), content: payload.content.trim() } });
+  checkOwner();
   await loadPosts();
+  checkOwner();
   const loaded=state.posts.find(post=>post.id===result.id);
   if(loaded)return loaded;
   // A confirmed write stays successful even if the subsequent list refresh fails.
   const post=normalizePost(result.post || {...payload,id:result.id,images,videoUrl,coverUrl,createdAt:Date.now(),author:state.user,comments:[]});
-  await resolvePrivateMedia([post]);state.posts.unshift(post);return post;
+  await resolvePrivateMedia([post], session);checkOwner();state.posts.unshift(post);return post;
 }
 
 async function likePost(id) {
@@ -192,10 +268,8 @@ export function useCommunityStore() { return store; }
 
 window.addEventListener('storage', async event => {
   if (event.key !== tokenKey && event.key !== null) return;
-  clearPrivateMedia();
-  token = event.key === null ? '' : event.newValue || '';
   // Clear identity synchronously so active AI work stops before any new lookup.
-  state.user = null;
+  setSession(event.key === null ? '' : event.newValue || '', null);
   await initialize();
 });
 window.addEventListener('beforeunload',()=>{clearPrivateMedia();events?.close();});

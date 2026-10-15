@@ -118,11 +118,15 @@ async function authenticated(request, context, required = true) {
   }
   return { user: { id: row.id, name: row.username, avatar: null }, owner: `account:${row.id}`, tokenHash, expiresAt: row.expires_at };
 }
-async function startSession(context, user) {
+async function startSession(context, user, accountStatement = null) {
   const token = randomHex();
   const expiresAt = Date.now() + SESSION_MS;
-  await context.DB.prepare('INSERT INTO account_sessions(token_hash,account_id,expires_at,created_at) VALUES(?,?,?,?)').bind(await digest(token), user.id, expiresAt, Date.now()).run();
-  await context.DB.prepare('DELETE FROM account_sessions WHERE expires_at<?').bind(Date.now()).run();
+  const sessionStatement = context.DB.prepare('INSERT INTO account_sessions(token_hash,account_id,expires_at,created_at) VALUES(?,?,?,?)').bind(await digest(token), user.id, expiresAt, Date.now());
+  if (accountStatement) await context.DB.batch([accountStatement, sessionStatement]);
+  else await sessionStatement.run();
+  // Expiry maintenance must not hide a successfully created account/session.
+  try { await context.DB.prepare('DELETE FROM account_sessions WHERE expires_at<?').bind(Date.now()).run(); }
+  catch { console.warn('Community expired-session cleanup deferred'); }
   return { token, user: { id: user.id, name: user.username, avatar: null }, expiresAt };
 }
 async function accountAction(request, context, action) {
@@ -146,12 +150,12 @@ async function accountAction(request, context, action) {
     const salt = randomHex(16);
     const password = await passwordHash(credentials.password, salt);
     try {
-      await context.DB.prepare('INSERT INTO accounts(id,username_key,username,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)').bind(user.id, credentials.usernameKey, user.username, salt, password, Date.now()).run();
+      const accountStatement = context.DB.prepare('INSERT INTO accounts(id,username_key,username,salt,password_hash,created_at) VALUES(?,?,?,?,?,?)').bind(user.id, credentials.usernameKey, user.username, salt, password, Date.now());
+      return json(request, context, await startSession(context, user, accountStatement), 201);
     } catch (error) {
-      if (/UNIQUE|constraint/i.test(error.message || '')) fail(409, 'USERNAME_TAKEN', '这个用户名已被使用');
+      if (/UNIQUE constraint failed:\s*accounts\.username_key\b/i.test(error.message || '')) fail(409, 'USERNAME_TAKEN', '这个用户名已被使用');
       throw error;
     }
-    return json(request, context, await startSession(context, user), 201);
   }
   // Execute the same password work for unknown accounts to avoid an account-existence timing shortcut.
   const calculated = await passwordHash(credentials.password, existing?.salt || '00000000000000000000000000000000');
