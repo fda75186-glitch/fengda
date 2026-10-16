@@ -173,7 +173,7 @@ watch(() => [props.initialPost, allPosts.value], async () => {
   const post=allPosts.value.find(post=>post.id===props.initialPost);
   if(post){await openPost(post);emit('viewed');}
 }, {immediate:true});
-onMounted(load);
+onMounted(() => store.ensurePosts());
 onBeforeUnmount(finishClose);
 </script>
 

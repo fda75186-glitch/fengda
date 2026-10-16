@@ -27,7 +27,12 @@ export async function createLocalStorage(dataDir) {
       async first() { return database.prepare(sql).get(...values) || null; },
       async all() { return { results: database.prepare(sql).all(...values) }; },
       async run() { return this.runSync(); },
-      runSync() { const result = database.prepare(sql).run(...values); return { success: true, meta: { changes: result.changes } }; },
+      runSync() {
+        const prepared = database.prepare(sql);
+        if (prepared.columns().length) return { success: true, results: prepared.all(...values), meta: { changes: 0 } };
+        const result = prepared.run(...values);
+        return { success: true, meta: { changes: result.changes } };
+      },
     };
   }
   const DB = {

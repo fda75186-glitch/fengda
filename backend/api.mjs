@@ -100,8 +100,7 @@ async function inputJson(request) {
 async function rate(context, key, maximum, windowMs) {
   const bucket = Math.floor(Date.now() / windowMs);
   const id = `${key}:${bucket}`;
-  await context.DB.prepare('INSERT INTO rate_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1').bind(id, (bucket + 1) * windowMs).run();
-  const row = await context.DB.prepare('SELECT count FROM rate_limits WHERE key=?').bind(id).first();
+  const row = await context.DB.prepare('INSERT INTO rate_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(id, (bucket + 1) * windowMs).first();
   if (row.count > maximum) fail(429, 'RATE_LIMIT', '操作较频繁，请稍后再试');
 }
 async function authenticated(request, context, required = true) {
@@ -173,15 +172,22 @@ async function readablePost(context, id, session) {
 function jsonList(value) { try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; } }
 async function listPosts(request, context, session) {
   const owner = session?.owner || '';
-  const result = await context.DB.prepare("SELECT p.*, (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.id) AS likes, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.owner=?) AS liked FROM posts p WHERE p.visibility='public' OR p.owner=? ORDER BY p.created_at DESC,p.id DESC LIMIT 200").bind(owner, owner).all();
-  const commentResult = await context.DB.prepare("SELECT c.* FROM comments c WHERE c.post_id IN (SELECT id FROM posts WHERE visibility='public' OR owner=? ORDER BY created_at DESC,id DESC LIMIT 200) ORDER BY c.created_at LIMIT 4000").bind(owner).all();
+  // Capture the revision before the feed in the same snapshot: a later mutation
+  // must still trigger an SSE refresh. Select bounded IDs before loading bodies.
+  const [revisionResult, result] = await context.DB.batch([
+    context.DB.prepare('SELECT MAX(id) AS revision FROM events'),
+    context.DB.prepare("WITH feed_ids AS (SELECT id,created_at FROM posts WHERE visibility='public' UNION SELECT id,created_at FROM posts WHERE owner=? ORDER BY created_at DESC,id DESC LIMIT 200) SELECT p.*, (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.id) AS likes, EXISTS(SELECT 1 FROM likes l WHERE l.post_id=p.id AND l.owner=?) AS liked FROM feed_ids f JOIN posts p ON p.id=f.id ORDER BY f.created_at DESC,f.id DESC").bind(owner, owner),
+  ]);
+  const revision = revisionResult.results[0]?.revision || 0;
+  // One JSON parameter stays within D1's bind limit even for the full 200 posts.
+  const commentResult = await context.DB.prepare('SELECT c.* FROM comments c WHERE c.post_id IN (SELECT value FROM json_each(?)) ORDER BY c.created_at LIMIT 4000').bind(JSON.stringify(result.results.map(post => post.id))).all();
   const comments = new Map();
   for (const comment of commentResult.results) {
     const group = comments.get(comment.post_id) || [];
     group.push({ id: comment.id, author: comment.author, content: comment.content, createdAt: comment.created_at });
     comments.set(comment.post_id, group);
   }
-  return json(request, context, { posts: result.results.map(post => ({
+  return json(request, context, { revision, posts: result.results.map(post => ({
     id: post.id, author: post.author, authorId: post.owner.startsWith('account:') ? post.owner.slice(8) : null,
     authorAvatar: null, title: post.title, content: post.content, category: CATEGORY_MAP[post.category] || post.category,
     target: post.target, location: post.location, images: jsonList(post.images), createdAt: post.created_at,

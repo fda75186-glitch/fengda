@@ -9,8 +9,16 @@ let token = '';
 export function getCommunityToken() { return token; }
 let loadPromise;
 let sessionVersion = 0;
+let feedLoadedAt = null;
+let feedSession = null;
+let feedRevision = null;
+let latestEventRevision = null;
 let events;
 const protectedMedia = new Map();
+const pendingMedia = new Map();
+const FEED_FRESH_MS = 5000;
+const MEDIA_TIMEOUT_MS = 15000;
+const VIDEO_TIMEOUT_MS = 180000;
 try { token = localStorage.getItem(tokenKey) || ''; } catch {}
 const categoryMap = { 星空摄影: '摄影分享', 行星观测: '观星日记' };
 const apiUrl = path => new URL(path, apiBase).href;
@@ -76,6 +84,10 @@ function setSession(nextToken, user) {
     clearPrivateMedia();
     state.posts = state.posts.filter(post => post.visibility !== 'private').map(post => ({ ...post, owned: false, liked: false }));
     loadPromise = undefined;
+    feedLoadedAt = null;
+    feedSession = null;
+    feedRevision = null;
+    latestEventRevision = null;
     state.loading = false;
     state.error = '';
   }
@@ -123,10 +135,55 @@ async function loadPosts() {
       if (!currentSession(session)) return;
       state.posts = posts.length ? posts : examples;
       state.ready = true;
+      feedLoadedAt = Date.now();
+      feedSession = session;
+      feedRevision = revisionNumber(result.revision);
+      return true;
     } catch (error) { if (currentSession(session)) state.error = error.message; }
     finally { if (loadPromise === load && currentSession(session)) { state.loading = false; loadPromise = undefined; } }
   })();
   return load.promise;
+}
+
+async function ensurePosts() {
+  if (feedSession && currentSession(feedSession) && feedLoadedAt !== null && Date.now() - feedLoadedAt < FEED_FRESH_MS) return;
+  return loadPosts();
+}
+
+function revisionNumber(value) {
+  if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
+}
+
+function privateMediaUrl(url, session, kind) {
+  const cacheKey = `${session.version}:${session.userId}:${url}`;
+  if (protectedMedia.has(cacheKey)) return Promise.resolve(protectedMedia.get(cacheKey));
+  if (pendingMedia.has(cacheKey)) return pendingMedia.get(cacheKey).promise;
+  const controller = new AbortController();
+  const download = { controller, promise: null };
+  download.promise = (async () => {
+    const timer = setTimeout(() => controller.abort(), kind === 'video' ? VIDEO_TIMEOUT_MS : MEDIA_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${session.token}` }, signal: controller.signal });
+      if (!currentSession(session)) { response.body?.cancel().catch(() => {}); return; }
+      if (!response.ok) throw new Error('私密内容附件暂时无法读取，请重新登录后重试。');
+      const blob = await response.blob();
+      if (!currentSession(session)) return;
+      const blobUrl = URL.createObjectURL(blob);
+      if (!currentSession(session)) { URL.revokeObjectURL(blobUrl); return; }
+      protectedMedia.set(cacheKey, blobUrl);
+      return blobUrl;
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('私密内容附件加载超时，请稍后重试。');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (pendingMedia.get(cacheKey) === download) pendingMedia.delete(cacheKey);
+    }
+  })();
+  pendingMedia.set(cacheKey, download);
+  return download.promise;
 }
 
 async function resolvePrivateMedia(posts, session = sessionSnapshot()) {
@@ -134,33 +191,37 @@ async function resolvePrivateMedia(posts, session = sessionSnapshot()) {
   for(const post of posts) {
     if(post.visibility!=='private')continue;
     for(const image of post.images)attachments.push([image,'url']);
-    if(post.video?.url)attachments.push([post.video,'url']);
+    if(post.video?.url)attachments.push([post.video,'url','video']);
     if(post.video?.poster)attachments.push([post.video,'poster']);
   }
-  const results=await Promise.allSettled(attachments.map(async ([object,key])=>{
+  const results=await Promise.allSettled(attachments.map(async ([object,key,kind])=>{
     if (!currentSession(session)) return;
-    const url=object[key], cacheKey=`${session.version}:${session.userId}:${url}`;
-    if(protectedMedia.has(cacheKey)){object[key]=protectedMedia.get(cacheKey);return;}
-    const response=await fetch(url,{headers:{Authorization:`Bearer ${session.token}`}});
-    if (!currentSession(session)) { response.body?.cancel().catch(() => {}); return; }
-    if(!response.ok)throw new Error('私密内容附件暂时无法读取，请重新登录后重试。');
-    const blob = await response.blob();
+    const blobUrl = await privateMediaUrl(object[key], session, kind);
     if (!currentSession(session)) return;
-    const blobUrl=URL.createObjectURL(blob);
-    if (!currentSession(session)) { URL.revokeObjectURL(blobUrl); return; }
-    protectedMedia.set(cacheKey,blobUrl);object[key]=blobUrl;
+    object[key]=blobUrl;
   }));
   if (!currentSession(session)) return;
   const failed=results.find(result=>result.status==='rejected');
   if(failed)state.error=failed.reason.message;
 }
 
-function clearPrivateMedia(){for(const url of protectedMedia.values())URL.revokeObjectURL(url);protectedMedia.clear();}
+function clearPrivateMedia(){for(const url of protectedMedia.values())URL.revokeObjectURL(url);protectedMedia.clear();for(const download of pendingMedia.values())download.controller.abort();pendingMedia.clear();}
 
 function subscribe() {
   if (events || !window.EventSource) return;
   events = new EventSource(apiUrl('/api/events'));
-  events.addEventListener('change', () => loadPosts());
+  events.addEventListener('change', event => {
+    const revision = revisionNumber(event.data);
+    if (revision !== null) {
+      latestEventRevision = Math.max(latestEventRevision ?? 0, revision);
+      if (feedRevision !== null && feedRevision >= revision) return;
+    }
+    const session = sessionSnapshot();
+    void loadPosts().then(loaded => {
+      // An event received during an older read must not be lost to coalescing.
+      if (loaded && currentSession(session) && feedRevision !== null && latestEventRevision > feedRevision) return loadPosts();
+    }).catch(() => {});
+  });
 }
 
 async function initialize() {
@@ -179,7 +240,7 @@ async function initialize() {
     }
   } else setSession('', null);
   const loadSession = sessionSnapshot();
-  await loadPosts();
+  await ensurePosts();
   if (!currentSession(loadSession)) return;
   if (lookupError && !state.error) state.error = lookupError;
   if (state.ready) subscribe();
@@ -192,9 +253,9 @@ async function authenticate(kind, credentials) {
   setSession(result.token, result.user);
   try { localStorage.setItem(tokenKey, token); } catch {}
   const authenticatedSession = sessionSnapshot();
-  await loadPosts();
-  if (!currentSession(authenticatedSession)) throw new Error('登录账号已变化，请重新登录。');
-  subscribe();
+  void loadPosts().then(() => {
+    if (currentSession(authenticatedSession) && state.ready) subscribe();
+  }).catch(error => { if (currentSession(authenticatedSession)) state.error = error.message || '社区暂时无法加载，请稍后重试。'; });
   return result.user;
 }
 
@@ -257,13 +318,14 @@ async function addComment(id, content) {
 }
 
 async function getPost(id) {
-  await loadPosts();
-  const post=state.posts.find(post=>post.id===id);
+  await ensurePosts();
+  let post=state.posts.find(post=>post.id===id);
+  if (!post) { await loadPosts(); post = state.posts.find(post=>post.id===id); }
   if(!post)throw new Error('这条内容已删除或当前账号无权查看。');
   return post;
 }
 
-const store = { state, initialize, loadPosts, login: credentials => authenticate('login', credentials), register: credentials => authenticate('register', credentials), logout, publishPost, likePost, addComment, getPost };
+const store = { state, initialize, loadPosts, ensurePosts, login: credentials => authenticate('login', credentials), register: credentials => authenticate('register', credentials), logout, publishPost, likePost, addComment, getPost };
 export function useCommunityStore() { return store; }
 
 window.addEventListener('storage', async event => {
